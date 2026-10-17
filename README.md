@@ -28,16 +28,18 @@ Everything is orchestrated from a small menu-bar app with a native SwiftUI contr
 | 🎙️ **Hold-to-talk dictation** | Hold ⌘ right (or ⌥ right / Fn / F5), speak, release. A floating bubble shows the mic level while you talk. |
 | 🌍 **Spanish & English** | Language is detected per utterance; the formatter always answers in the language you spoke. |
 | ✨ **Text styles** | **Off** (raw transcript, no LLM), **Natural**, **Informal**, **Formal** — switchable from the menu bar or the panel. |
-| 🔵 **Automatic meetings** | Detects meetings by app or browser tab, records system audio + mic, then transcribes and summarizes: Resumen / Decisiones / Acciones. |
+| 🔵 **Automatic meetings** | Detects meetings by app or browser tab, records system audio + mic, then transcribes and summarizes: Resumen / Decisiones / Acciones. Editable summary + transcript in a detail window, export to **Markdown (clipboard)** or **PDF**. |
+| 🗣️ **Voice commands** | Say "nueva línea" or "punto y aparte" to insert real line/paragraph breaks; "dos puntos" and "punto y coma" too. |
+| 📖 **Custom dictionary** | List names and terms once; the formatter spells them exactly as written. |
 | ⚡ **Low latency** | Silence trimming, in-memory WAV upload, TLS prewarm, latency-based provider routing. |
 | 🔀 **Two providers** | Nan or OpenRouter, with live model catalogs and per-provider selection. |
 | 🔒 **Privacy-first** | Audio travels only to your chosen API. Transcripts, meeting recordings and history never leave your Mac. |
 
 ## 📸 Screenshots
 
-| Control panel | Dictation result |
-|:---:|:---:|
-| ![Nanflow control panel](docs/screenshots/settings.png) | ![Dictation pasted into TextEdit](docs/screenshots/dictation.png) |
+| Control panel | Dictation result | Meeting editor & export |
+|:---:|:---:|:---:|
+| ![Nanflow control panel](docs/screenshots/settings.png) | ![Dictation pasted into TextEdit](docs/screenshots/dictation.png) | ![Meeting detail with Markdown/PDF export](docs/screenshots/meeting-detail.png) |
 
 Quick controls live in the menu bar — no window needed:
 
@@ -177,10 +179,12 @@ tail ~/Library/Application\ Support/Nanflow/nanflow.log
 
 ## 🗺️ Roadmap
 
-- [ ] Meeting summary editor window
-- [ ] Custom dictionary for names and terms
-- [ ] Voice commands ("nueva línea", "punto y aparte")
-- [ ] PDF export for meeting reports
+- [x] Meeting summary editor window (editable summary + transcript)
+- [x] Custom dictionary for names and terms
+- [x] Voice commands ("nueva línea", "punto y aparte", "dos puntos", "punto y coma")
+- [x] Meeting report export — Markdown via clipboard + PDF
+- [ ] Shareable transcript links
+- [ ] On-device VAD for automatic dictation stop
 
 ---
 

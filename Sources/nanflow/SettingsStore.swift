@@ -16,6 +16,7 @@ final class SettingsStore: ObservableObject {
         static let meetingsEnabled = "nanflow.meetings"
         static let meetingsAutoRecord = "nanflow.meetings.autorecord"
         static let trimSilence = "nanflow.trim"
+        static let dictionary = "nanflow.dictionary"
     }
 
     weak var dictation: DictationEngine?
@@ -47,6 +48,18 @@ final class SettingsStore: ObservableObject {
             defaults.set(trimSilence, forKey: Keys.trimSilence)
             dictation?.trimSilenceEnabled = trimSilence
         }
+    }
+    @Published var dictionaryText: String {
+        didSet {
+            defaults.set(dictionaryText, forKey: Keys.dictionary)
+            dictation?.dictionary = dictionaryLines
+        }
+    }
+    var dictionaryLines: [String] {
+        dictionaryText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .filter { !$0.isEmpty }
     }
     @Published var historyEntries: [HistoryEntry] = []
 
@@ -98,6 +111,7 @@ final class SettingsStore: ObservableObject {
         meetingsEnabled = defaults.object(forKey: Keys.meetingsEnabled) as? Bool ?? true
         meetingsAutoRecord = defaults.object(forKey: Keys.meetingsAutoRecord) as? Bool ?? true
         trimSilence = defaults.object(forKey: Keys.trimSilence) as? Bool ?? true
+        dictionaryText = defaults.string(forKey: Keys.dictionary) ?? ""
         provider = ProviderSettings.shared.provider
     }
 
@@ -157,6 +171,7 @@ final class SettingsStore: ObservableObject {
     func syncEngines() {
         dictation?.style = style
         dictation?.trimSilenceEnabled = trimSilence
+        dictation?.dictionary = dictionaryLines
     }
 
     func refreshHistory() {

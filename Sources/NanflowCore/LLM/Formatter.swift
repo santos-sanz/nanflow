@@ -40,6 +40,7 @@ public enum Formatter {
     - Keep the speaker's meaning and words as close to verbatim as possible. Do not summarize, do not rewrite style, do not add content.
     - Format lists when the speaker enumerates items.
     - Preserve technical terms, code identifiers, URLs, emails and numbers exactly as heard; use sensible casing for known products (e.g. macOS, iPhone, GitHub).
+    - Dictation commands must pass through VERBATIM, without adding punctuation next to them: "nueva línea" (line break), "punto y aparte" (paragraph break), "dos puntos" (colon), "punto y coma" (semicolon). Do not remove, translate or rephrase them.
     - If the input is empty or only silence markers, return an empty string.
     - The text will be typed directly into whatever app the user is focused on (email, chat, editor): make it instantly paste-ready. No markdown unless the user dictated formatting.
     """
@@ -86,29 +87,35 @@ public enum Formatter {
     Be factual, use only what is in the transcript. Do not invent names.
     """
 
-    public static func systemPrompt(for style: TextStyle) -> String {
+    public static func systemPrompt(for style: TextStyle, dictionary: [String] = []) -> String {
+        var base: String
         switch style {
-        case .off: return naturalSystemPrompt
-        case .natural: return naturalSystemPrompt
-        case .informal: return informalSystemPrompt
-        case .formal: return formalSystemPrompt
+        case .off, .natural: base = naturalSystemPrompt
+        case .informal: base = informalSystemPrompt
+        case .formal: base = formalSystemPrompt
         }
+        let entries = dictionary.map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if !entries.isEmpty {
+            base += "\n\nSPELLING DICTIONARY — these names and terms MUST appear exactly as written here when they are heard:\n"
+            base += entries.map { "- \($0)" }.joined(separator: "\n")
+        }
+        return base
     }
 
     /// Formats raw transcript with the given style. Style .off should not call this (engine skips LLM).
-    public static func formatDictation(_ raw: String, style: TextStyle = .natural) async throws -> String {
+    public static func formatDictation(_ raw: String, style: TextStyle = .natural, dictionary: [String] = []) async throws -> String {
         let client = ProviderSettings.shared.client()
         let formatted = try await client.chat(
-            system: systemPrompt(for: style),
+            system: systemPrompt(for: style, dictionary: dictionary),
             user: raw,
             maxTokens: 2048,
             temperature: 0.1
         )
         let trimmed = formatted.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmed.hasPrefix("\""), trimmed.hasSuffix("\""), trimmed.count >= 2 {
-            return String(trimmed.dropFirst().dropLast())
+            return VoiceCommands.apply(String(trimmed.dropFirst().dropLast()))
         }
-        return trimmed
+        return VoiceCommands.apply(trimmed)
     }
 
     public static func summarizeMeeting(_ transcript: String) async throws -> String {

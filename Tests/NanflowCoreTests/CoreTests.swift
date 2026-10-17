@@ -263,3 +263,74 @@ final class ProviderSettingsTests: XCTestCase {
         XCTAssertTrue(or.isConfigured)
     }
 }
+
+final class VoiceCommandsTests: XCTestCase {
+    func testLineBreakCommands() {
+        XCTAssertEqual(VoiceCommands.apply("hola nueva línea mundo"), "hola\nmundo")
+        XCTAssertEqual(VoiceCommands.apply("hola Nueva Línea mundo"), "hola\nmundo")
+        XCTAssertEqual(VoiceCommands.apply("a punto y aparte b"), "a\n\nb")
+        XCTAssertEqual(VoiceCommands.apply("a New Paragraph b"), "a\n\nb")
+    }
+
+    func testPunctuationCommands() {
+        XCTAssertEqual(VoiceCommands.apply("uno dos puntos tres"), "uno : tres")
+        XCTAssertEqual(VoiceCommands.apply("x punto y coma y"), "x ; y")
+    }
+
+    func testCleanupBreaks() {
+        XCTAssertEqual(VoiceCommands.cleanupBreaks("Hola, \n."), "Hola,\n")
+        XCTAssertEqual(VoiceCommands.cleanupBreaks("clave: \n\n, primero"), "clave:\n\nprimero")
+    }
+
+    func testNoCommandsUntouched() {
+        XCTAssertEqual(VoiceCommands.apply("hola mundo normal"), "hola mundo normal")
+        XCTAssertEqual(VoiceCommands.apply(""), "")
+    }
+
+    func testContainsCommands() {
+        XCTAssertTrue(VoiceCommands.containsCommands("dime nueva línea por favor"))
+        XCTAssertFalse(VoiceCommands.containsCommands("nada que ver"))
+    }
+}
+
+final class MeetingExporterTests: XCTestCase {
+    func testMarkdownStructure() {
+        var entry = HistoryEntry(kind: .meeting, app: "Zoom", audioDuration: 92, rawText: "habló ana de budget", summary: "## Resumen\n- Punto 1")
+        entry.timestamp = Date(timeIntervalSince1970: 1_700_000_000)
+        let md = MeetingExporter.markdown(for: entry)
+        XCTAssertTrue(md.hasPrefix("# Zoom meeting"))
+        XCTAssertTrue(md.contains("**Duration:** 1m 32s"))
+        XCTAssertTrue(md.contains("## Summary"))
+        XCTAssertTrue(md.contains("## Transcript"))
+        XCTAssertTrue(md.contains("habló ana de budget"))
+    }
+
+    func testMarkdownClipboardRoundTrip() {
+        let entry = HistoryEntry(kind: .meeting, app: "FaceTime", rawText: "texto", summary: "resumen")
+        MeetingExporter.copyToClipboard(entry)
+        let pb = NSPasteboard.general.string(forType: .string) ?? ""
+        XCTAssertTrue(pb.contains("# FaceTime meeting"))
+        XCTAssertTrue(pb.contains("resumen"))
+    }
+
+    func testPDFProducesData() {
+        let entry = HistoryEntry(kind: .meeting, app: "Zoom", rawText: "transcripcion de prueba", summary: "resumen de prueba")
+        let data = MeetingExporter.pdfData(for: entry)
+        XCTAssertTrue(data.count > 1000, "PDF demasiado pequeño: \(data.count)")
+        XCTAssertEqual(String(data: data.prefix(5), encoding: .ascii), "%PDF-")
+    }
+}
+
+final class DictionaryPromptTests: XCTestCase {
+    func testSystemPromptIncludesDictionary() {
+        let p = Formatter.systemPrompt(for: .natural, dictionary: ["Andrés Santos", "LangChain"])
+        XCTAssertTrue(p.contains("SPELLING DICTIONARY"))
+        XCTAssertTrue(p.contains("- Andrés Santos"))
+        XCTAssertTrue(p.contains("- LangChain"))
+    }
+
+    func testSystemPromptWithoutDictionary() {
+        let p = Formatter.systemPrompt(for: .natural, dictionary: [])
+        XCTAssertFalse(p.contains("SPELLING DICTIONARY"))
+    }
+}

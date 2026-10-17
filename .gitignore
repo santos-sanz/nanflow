@@ -1,0 +1,8 @@
+.build/
+build/
+references/
+*.aiff
+*.wav
+.DS_Store
+.env
+.swiftpm/

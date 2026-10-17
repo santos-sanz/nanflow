@@ -203,6 +203,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         styleItem.submenu = styleMenu
         menu.addItem(styleItem)
 
+        let transformItem = NSMenuItem(title: "Transformar último dictado", action: nil, keyEquivalent: "")
+        let transformMenu = NSMenu()
+        let hasDictations = settings.history.dictations().isEmpty == false
+        for preset in Formatter.TransformPreset.allCases {
+            let item = NSMenuItem(title: preset.label, action: hasDictations ? #selector(transformLastDictation(_:)) : nil, keyEquivalent: "")
+            item.target = self
+            item.representedObject = preset.rawValue
+            if !hasDictations { item.isEnabled = false }
+            transformMenu.addItem(item)
+        }
+        transformItem.submenu = transformMenu
+        menu.addItem(transformItem)
+
         menu.addItem({
             let item = NSMenuItem(title: "Detectar reuniones", action: #selector(toggleMeetings), keyEquivalent: "")
             item.target = self
@@ -259,6 +272,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         historyTitle.submenu = historyMenu
         menu.addItem(historyTitle)
+
+        menu.addItem(.separator())
+        let scratchpadItem = NSMenuItem(title: "Abrir Scratchpad", action: #selector(openScratchpad), keyEquivalent: "")
+        scratchpadItem.target = self
+        menu.addItem(scratchpadItem)
+        if hasDictations {
+            let append = NSMenuItem(title: "Añadir último dictado al Scratchpad", action: #selector(appendLastDictationToScratchpad), keyEquivalent: "")
+            append.target = self
+            menu.addItem(append)
+        }
 
         menu.addItem(.separator())
         menu.addItem(permissionsMenuItem())
@@ -351,6 +374,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(entry.finalText, forType: .string)
         notify(title: "Copiado", body: String(entry.finalText.prefix(80)))
+    }
+
+    @objc private func transformLastDictation(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let preset = Formatter.TransformPreset(rawValue: raw),
+              let entry = settings.history.all().first(where: { $0.kind == .dictation })
+        else { return }
+        let source = entry.finalText
+        notify(title: "Transformando…", body: preset.label)
+        Task.detached {
+            do {
+                let result = try await Formatter.transform(source, preset: preset)
+                let trimmed = result.trimmingCharacters(in: .whitespacesAndNewlines)
+                guard !trimmed.isEmpty else { throw NanError.invalidResponse }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(trimmed, forType: .string)
+                Self.pushNotification(title: preset.label, body: String(trimmed.prefix(120)))
+            } catch {
+                Self.pushNotification(title: "Transform falló", body: error.localizedDescription, error: true)
+            }
+        }
+    }
+
+    @MainActor
+    @objc private func openScratchpad() {
+        ScratchpadWindowController.shared.show()
+    }
+
+    @objc private func appendLastDictationToScratchpad() {
+        guard let entry = settings.history.all().first(where: { $0.kind == .dictation }) else { return }
+        ScratchpadStore.shared.append(entry.finalText)
+        notify(title: "Scratchpad", body: "Último dictado añadido.")
     }
 
     @objc private func openHistory() {
@@ -487,6 +542,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func notify(title: String, body: String, error: Bool = false) {
+        Self.pushNotification(title: title, body: body, error: error)
+    }
+
+    static func pushNotification(title: String, body: String, error: Bool = false) {
         let center = UNUserNotificationCenter.current()
         center.requestAuthorization(options: [.alert, .sound]) { granted, _ in
             guard granted else { return }

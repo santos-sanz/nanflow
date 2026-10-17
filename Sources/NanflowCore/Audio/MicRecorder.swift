@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreAudio
 import Foundation
 
 /// Captures microphone audio, accumulates 16 kHz mono samples, and writes a WAV on stop.
@@ -10,6 +11,9 @@ public final class MicRecorder {
     private let queue = DispatchQueue(label: "nanflow.micrecorder")
     private(set) public var startedAt: Date?
     private(set) public var isRecording = false
+    private var tapInstalled = false
+    /// Persistent UID of the mic to dictate with; nil = system default input.
+    public var preferredDeviceUID: String?
 
     public init() {}
 
@@ -38,15 +42,41 @@ public final class MicRecorder {
             throw NSError(domain: "Nanflow.MicRecorder", code: 4, userInfo: [NSLocalizedDescriptionKey: "No se pudo crear AVAudioConverter"])
         }
         converter = conv
+        applyPreferredDevice(to: input)
 
-        input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
-            self?.enqueue(buffer: buffer, converter: conv)
+        // The tap is installed once; reinstalling it after removeTap throws
+        // NSException in AVAudioEngine. start/stop cycles only toggle the engine.
+        if !tapInstalled {
+            input.installTap(onBus: 0, bufferSize: 4096, format: inputFormat) { [weak self] buffer, _ in
+                self?.enqueue(buffer: buffer, converter: conv)
+            }
+            tapInstalled = true
         }
 
         engine.prepare()
         try engine.start()
         startedAt = Date()
         isRecording = true
+    }
+
+    /// Points the engine's input HAL unit at the user-selected microphone (best effort).
+    private func applyPreferredDevice(to input: AVAudioInputNode) {
+        guard let uid = preferredDeviceUID, !uid.isEmpty,
+              let deviceID = AudioDevices.deviceID(forUID: uid),
+              deviceID != AudioDevices.defaultInputDeviceID()
+        else { return }
+        var device = deviceID
+        let status = AudioUnitSetProperty(
+            input.audioUnit!,
+            kAudioOutputUnitProperty_CurrentDevice,
+            kAudioUnitScope_Global,
+            0,
+            &device,
+            UInt32(MemoryLayout<AudioObjectID>.size)
+        )
+        if status != noErr {
+            NFLog.write("mic: no se pudo seleccionar el dispositivo \(deviceID) (\(status))")
+        }
     }
 
     private func enqueue(buffer: AVAudioPCMBuffer, converter: AVAudioConverter) {
@@ -73,7 +103,7 @@ public final class MicRecorder {
 
     public func stop() -> (samples: [Float], sampleRate: Double, duration: TimeInterval)? {
         guard isRecording else { return nil }
-        input_stop()
+        engine.stop()
         var result: [Float] = []
         var started: Date?
         queue.sync {
@@ -85,11 +115,6 @@ public final class MicRecorder {
         converter = nil
         let duration = started.map { Date().timeIntervalSince($0) } ?? 0
         return (result, targetRate, duration)
-    }
-
-    private func input_stop() {
-        engine.inputNode.removeTap(onBus: 0)
-        engine.stop()
     }
 
     public func stopAndWrite(to url: URL) throws -> TimeInterval {

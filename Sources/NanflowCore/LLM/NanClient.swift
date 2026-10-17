@@ -63,9 +63,9 @@ public final class NanClient: @unchecked Sendable {
     // MARK: - Whisper transcription (audio -> text)
 
     /// Transcribes raw mono samples without touching the disk (fast path for dictation).
-    public func transcribe(samples: [Float], sampleRate: Double, language: String? = nil) async throws -> TranscriptionOutput {
+    public func transcribe(samples: [Float], sampleRate: Double, language: String? = nil, prompt: String? = nil) async throws -> TranscriptionOutput {
         let wav = WavEncoder.encode(samples: samples, sampleRate: sampleRate)
-        return try await transcribeUpload(audioData: wav, filename: "audio.wav", language: language)
+        return try await transcribeUpload(audioData: wav, filename: "audio.wav", language: language, prompt: prompt)
     }
 
     /// Transcribes an audio file from disk (used for meetings).
@@ -74,7 +74,7 @@ public final class NanClient: @unchecked Sendable {
         return try await transcribeUpload(audioData: data, filename: audioURL.lastPathComponent, language: language)
     }
 
-    private func transcribeUpload(audioData: Data, filename: String, language: String?) async throws -> TranscriptionOutput {
+    private func transcribeUpload(audioData: Data, filename: String, language: String?, prompt: String? = nil) async throws -> TranscriptionOutput {
         guard config.isConfigured else { throw NanError.notConfigured }
 
         let boundary = "nanflow-\(UUID().uuidString)"
@@ -97,6 +97,7 @@ public final class NanClient: @unchecked Sendable {
             addField("provider", "{\"sort\":\"latency\"}")
         }
         if let language { addField("language", language) }
+        if let prompt, !prompt.isEmpty { addField("prompt", prompt) }
         addField("response_format", "verbose_json")
 
         body.append("--\(boundary)\r\n".data(using: .utf8)!)

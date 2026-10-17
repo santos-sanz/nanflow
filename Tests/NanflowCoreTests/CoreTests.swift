@@ -273,8 +273,8 @@ final class VoiceCommandsTests: XCTestCase {
     }
 
     func testPunctuationCommands() {
-        XCTAssertEqual(VoiceCommands.apply("uno dos puntos tres"), "uno : tres")
-        XCTAssertEqual(VoiceCommands.apply("x punto y coma y"), "x ; y")
+        XCTAssertEqual(VoiceCommands.apply("uno dos puntos tres"), "uno: tres")
+        XCTAssertEqual(VoiceCommands.apply("x punto y coma y"), "x; y")
     }
 
     func testCleanupBreaks() {
@@ -437,5 +437,149 @@ final class ClientCacheTests: XCTestCase {
         ProviderSettings.shared.setLLMModel("test/model-two", for: p)
         let b = ProviderSettings.shared.client(for: p)
         XCTAssertFalse(a === b)
+    }
+}
+
+final class SnippetsTests: XCTestCase {
+    private func store(_ snippets: [Snippet]) -> SnippetsStore {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("nf-snip-\(UUID()).json")
+        let s = SnippetsStore(fileURL: url)
+        s.set(snippets)
+        return s
+    }
+
+    func testExactMatchIsCaseInsensitiveAndTrimmed() {
+        let s = store([Snippet(trigger: "  mi email ", expansion: "andres@example.com")])
+        XCTAssertEqual(s.exactMatch("MI  EMAIL"), "andres@example.com")
+        XCTAssertEqual(s.exactMatch("mi email"), "andres@example.com")
+        XCTAssertNil(s.exactMatch("dime mi email"))
+        XCTAssertNil(s.exactMatch(""))
+    }
+
+    func testApplyReplacesInsideText() {
+        let s = store([Snippet(trigger: "mi email", expansion: "andres@example.com")])
+        XCTAssertEqual(s.apply("escríbeme a mi email porfa"), "escríbeme a andres@example.com porfa")
+    }
+
+    func testApplyPrefersLongestTrigger() {
+        let s = store([
+            Snippet(trigger: "mi web", expansion: "https://a.com"),
+            Snippet(trigger: "mi web personal", expansion: "https://b.com"),
+        ])
+        XCTAssertEqual(s.apply("mira mi web personal"), "mira https://b.com")
+        XCTAssertEqual(s.apply("mira mi web"), "mira https://a.com")
+    }
+
+    func testApplyRespectsWordBoundaries() {
+        let s = store([Snippet(trigger: "pusea", expansion: "Pusea")])
+        XCTAssertEqual(s.apply("hay una impusea ahí"), "hay una impusea ahí")
+    }
+
+    func testPersistenceRoundTrip() throws {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("nf-snip-\(UUID()).json")
+        let first = SnippetsStore(fileURL: url)
+        first.add(trigger: "linkedin", expansion: "https://linkedin.com/in/x")
+        let second = SnippetsStore(fileURL: url)
+        XCTAssertEqual(second.all().count, 1)
+        XCTAssertEqual(second.all().first?.trigger, "linkedin")
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
+final class VoiceCommandExtensionsTests: XCTestCase {
+    func testPunctuationSpacingIsCleaned() {
+        XCTAssertEqual(VoiceCommands.apply("uno dos puntos tres"), "uno: tres")
+        XCTAssertEqual(VoiceCommands.apply("x punto y coma y"), "x; y")
+        XCTAssertEqual(VoiceCommands.apply("uno coma dos"), "uno, dos")
+        XCTAssertEqual(VoiceCommands.apply("hola punto final"), "hola.")
+    }
+
+    func testLongestPhraseWins() {
+        XCTAssertEqual(VoiceCommands.apply("fin punto y coma"), "fin;")
+        // "palabra (nota)" is correct prose, so the space before "(" stays;
+        // "( hola )" still gets normalized to "(hola)".
+        XCTAssertEqual(VoiceCommands.apply("paréntesis abrir paréntesis cerrar paréntesis"), "paréntesis ()")
+        XCTAssertEqual(VoiceCommands.cleanupSpacing("( hola )"), "(hola)")
+    }
+
+    func testEnterCommands() {
+        XCTAssertEqual(VoiceCommands.apply("línea uno pulsa enter línea dos"), "línea uno\nlínea dos")
+        XCTAssertEqual(VoiceCommands.apply("a press enter b"), "a\nb")
+    }
+
+    func testQuotes() {
+        XCTAssertEqual(VoiceCommands.apply("dijo comillas hola comillas"), "dijo \" hola \"")
+    }
+}
+
+final class InsightsTests: XCTestCase {
+    func testSummaryCountsWordsAndWPM() {
+        var a = HistoryEntry(kind: .dictation, audioDuration: 60, rawText: "uno dos", finalText: "uno dos tres cuatro")
+        a.transcriptionMs = 100
+        var b = HistoryEntry(kind: .dictation, audioDuration: 30, rawText: "hola", finalText: "hola mundo")
+        b.transcriptionMs = 50
+        let meeting = HistoryEntry(kind: .meeting, audioDuration: 600, rawText: "mucho texto", finalText: "mucho texto")
+
+        let summary = Insights.summary([a, b, meeting])
+        XCTAssertEqual(summary.dictationCount, 2)
+        XCTAssertEqual(summary.totalWords, 6)
+        // 6 words in 90 s = 4 wpm
+        XCTAssertEqual(summary.averageWPM, 4)
+        XCTAssertEqual(summary.totalMinutes, 1)
+        _ = a; _ = b
+    }
+
+    func testEmptyHistory() {
+        let summary = Insights.summary([])
+        XCTAssertEqual(summary.totalWords, 0)
+        XCTAssertEqual(summary.averageWPM, 0)
+    }
+}
+
+final class TransformPresetTests: XCTestCase {
+    func testSixPresetsWithPrompts() {
+        XCTAssertEqual(Formatter.TransformPreset.allCases.count, 6)
+        for preset in Formatter.TransformPreset.allCases {
+            XCTAssertFalse(preset.systemPrompt.isEmpty)
+            XCTAssertFalse(preset.label.isEmpty)
+        }
+        XCTAssertTrue(Formatter.TransformPreset.english.systemPrompt.contains("ENGLISH"))
+        XCTAssertTrue(Formatter.TransformPreset.grammar.systemPrompt.contains("SAME LANGUAGE"))
+    }
+}
+
+final class ScratchpadStoreTests: XCTestCase {
+    func testReadWriteAndAppend() {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("nf-scratch-\(UUID()).md")
+        let store = ScratchpadStore(fileURL: url)
+        store.write("primera nota")
+        XCTAssertEqual(store.read(), "primera nota")
+        store.append("segunda nota", date: Date(timeIntervalSince1970: 1_700_000_000))
+        let content = store.read()
+        XCTAssertTrue(content.contains("## 2023-11-14"))
+        XCTAssertTrue(content.contains("segunda nota"))
+        XCTAssertTrue(content.contains("primera nota"))
+        store.append("   ")
+        XCTAssertEqual(store.read(), content)
+        try? FileManager.default.removeItem(at: url)
+    }
+}
+
+final class SnippetPromptTests: XCTestCase {
+    func testExactMatchIgnoresTrailingPunctuation() {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("nf-snip-\(UUID()).json")
+        let s = SnippetsStore(fileURL: url)
+        s.set([Snippet(trigger: "mi email personal", expansion: "a@b.com")])
+        XCTAssertEqual(s.exactMatch("mi email personal."), "a@b.com")
+        XCTAssertEqual(s.exactMatch("Mi  email personal,"), "a@b.com")
+        try? FileManager.default.removeItem(at: url)
+    }
+
+    func testPromptHintsJoinsTriggers() {
+        let url = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent("nf-snip-\(UUID()).json")
+        let s = SnippetsStore(fileURL: url)
+        s.set([Snippet(trigger: "mi email personal", expansion: "a@b.com"), Snippet(trigger: "  ", expansion: "x")])
+        XCTAssertEqual(s.promptHints(), "mi email personal.")
+        try? FileManager.default.removeItem(at: url)
     }
 }

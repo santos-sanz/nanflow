@@ -87,6 +87,56 @@ public enum Formatter {
     Be factual, use only what is in the transcript. Do not invent names.
     """
 
+    /// Post-dictation transforms, like Wispr Flow's Transforms: rewrite, clean up or
+    /// restructure a text that was already dictated.
+    public enum TransformPreset: String, CaseIterable, Sendable {
+        case summary
+        case bullets
+        case formal
+        case casual
+        case english
+        case grammar
+
+        public var label: String {
+            switch self {
+            case .summary: return "Resumir"
+            case .bullets: return "Lista de puntos"
+            case .formal: return "Más formal"
+            case .casual: return "Más informal"
+            case .english: return "Traducir a inglés"
+            case .grammar: return "Corregir gramática"
+            }
+        }
+
+        public var systemPrompt: String {
+            switch self {
+            case .summary:
+                return "Summarize the text in the SAME LANGUAGE it is written in, keeping every key fact. Respond only with the summary."
+            case .bullets:
+                return "Rewrite the text as a concise bullet list in the SAME LANGUAGE. One idea per line, prefixed with '- '. Respond only with the list."
+            case .formal:
+                return "Rewrite the text in a PROFESSIONAL, FORMAL register in the SAME LANGUAGE. Keep all information; remove colloquialisms. Respond only with the rewritten text."
+            case .casual:
+                return "Rewrite the text in a CASUAL, FRIENDLY tone in the SAME LANGUAGE, like texting a teammate. Keep all information. No emoji. Respond only with the rewritten text."
+            case .english:
+                return "Translate the text into ENGLISH. Keep meaning and tone. Respond only with the translation."
+            case .grammar:
+                return "Fix grammar, spelling, punctuation and accents in the text WITHOUT changing its tone, style or wording more than necessary. Keep the SAME LANGUAGE. Respond only with the corrected text."
+            }
+        }
+    }
+
+    /// Applies a transform to an already-dictated text using the active provider.
+    public static func transform(_ text: String, preset: TransformPreset) async throws -> String {
+        let client = ProviderSettings.shared.client()
+        return try await client.chat(
+            system: preset.systemPrompt,
+            user: text,
+            maxTokens: 2048,
+            temperature: 0.2
+        )
+    }
+
     public static func systemPrompt(for style: TextStyle, dictionary: [String] = []) -> String {
         var base: String
         switch style {

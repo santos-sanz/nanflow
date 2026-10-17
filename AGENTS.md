@@ -6,7 +6,7 @@ Clon de Wispr Flow para macOS con **transcripción vía API de Nan** (whisper cl
 
 ```bash
 swift build -c release                 # compilar todo
-swift test                             # unit tests (16 tests)
+swift test                             # unit tests (22 tests)
 ./scripts/build-app.sh release         # genera build/Nanflow.app (firmado con "Nanflow Dev")
 open build/Nanflow.app                 # lanzar la app (menú bar)
 .build/release/nanflow-cli env         # config Nan cargada
@@ -23,18 +23,24 @@ open build/Nanflow.app                 # lanzar la app (menú bar)
 - **NanflowCore** (librería, testable sin GUI):
   - `Config/AppConfig.swift` — `.env` (NAN_API_KEY, NAN_BASE_URL, NAN_MODEL, NAN_WHISPER_MODEL). Búsqueda: env vars → ~/.nanflow/.env → ~/Library/Application Support/Nanflow/.env → CWD/.env → bundle Resources/.env
   - `Config/NFLog.swift` — log en `~/Library/Application Support/Nanflow/nanflow.log`
-  - `LLM/NanClient.swift` — whisper (`/v1/audio/transcriptions`, multipart) + chat (`/v1/chat/completions`, con `chat_template_kwargs: {enable_thinking: false}` para latencia <2s)
-  - `LLM/Formatter.swift` — prompts de dictado y resumen de reuniones
+  - `LLM/NanClient.swift` — whisper (`/v1/audio/transcriptions`, multipart, **también in-memory con `transcribe(samples:)`**) + chat (`/v1/chat/completions`, con `chat_template_kwargs: {enable_thinking: false}` para latencia <2s) + `prewarm()` (calienta DNS+TLS al lanzar)
+  - `LLM/Formatter.swift` — **TextStyle** (off/natural/informal/formal) con prompts por estilo; `.off` no debe llamar al LLM (lo salta el motor)
   - `Audio/MicRecorder.swift` — AVAudioEngine → 16k mono (converter por buffer)
+  - `Audio/WavEncoder.swift` — WAV PCM16 en memoria (sin disco en el hot path de dictado)
   - `Audio/SystemAudioRecorder.swift` — **Core Audio Process Tap** (macOS 14.2+, SIN permiso de pantalla): tap global excluyendo nuestro proceso → aggregate device → IOProc @48k
-  - `Audio/AudioMixer.swift` — resample (drena con `.endOfStream`) + mezcla con offset
+  - `Audio/AudioMixer.swift` — resample (drena con `.endOfStream`) + mezcla con offset + `trimSilence` (recorta silencios cabecera/cola, ~15% menos upload)
   - `HotKey/HotKeyMonitor.swift` — CGEventTap en **hilo dedicado** (no en el run loop de NSApp), maneja `flagsChanged` con code=0 (eventos sintéticos) y con keycode real (teclado físico), suprime la tecla, reactiva el tap si el sistema lo deshabilita
-  - `Dictation/DictationEngine.swift` — máquina de estados idle→recording→transcribing→formatting (usa `transition(from:to:)`, NUNCA lock anidado → deadlock)
+  - `Dictation/DictationEngine.swift` — máquina de estados idle→recording→transcribing→formatting (usa `transition(from:to:)`, NUNCA lock anidado → deadlock); respeta `style` y `trimSilenceEnabled`
   - `Meeting/MeetingDetector.swift` — poll 2s: bundle IDs de apps nativas + pestañas meet.google.com en Chrome/Edge/Brave (AppleScript best-effort)
   - `Meeting/MeetingEngine.swift` — graba sistema+micro mezclados → WAV en AppSupport/meetings → whisper → resumen LLM → history
   - `TextInsert/TextInserter.swift` — clipboard backup → Cmd+V sintético → restaura clipboard
   - `History/HistoryStore.swift` — JSON en AppSupport, **iso8601 en lectura Y escritura**
-- **nanflow** (app menú-bar): AppDelegate + BubblePanel (NSPanel no activable cerca del cursor)
+- **nanflow** (app menú-bar):
+  - `AppDelegate.swift` — status item, menú (Ajustes…, Estilo, Atajo, Historial, permisos), wiring de motores
+  - `SettingsStore.swift` — ObservableObject con @Published persistidos en UserDefaults, aplica cambios en vivo a los motores
+  - `SettingsView.swift` — frontend SwiftUI: panel de control (estilo, atajo, reuniones, permisos, historial reciente con copiar)
+  - `SettingsWindowController.swift` — NSWindow + NSHostingView
+  - `BubblePanel.swift` — NSPanel no activable cerca del cursor
 - **nanflow-cli**: harness de testing (sin GUI)
 
 ## Gotchas aprendidos (no repetir)

@@ -33,9 +33,31 @@ public final class NanClient: @unchecked Sendable {
         self.session = URLSession(configuration: cfg)
     }
 
+    /// Warms up DNS + TLS + HTTP/2 to the Nan API so the first real request skips the handshake.
+    public func prewarm() {
+        guard config.isConfigured else { return }
+        var request = URLRequest(url: URL(string: "\(config.baseURL)/models")!)
+        request.httpMethod = "HEAD"
+        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 10
+        session.dataTask(with: request).resume()
+    }
+
     // MARK: - Whisper transcription (audio -> text)
 
+    /// Transcribes raw mono samples without touching the disk (fast path for dictation).
+    public func transcribe(samples: [Float], sampleRate: Double, language: String? = nil) async throws -> TranscriptionOutput {
+        let wav = WavEncoder.encode(samples: samples, sampleRate: sampleRate)
+        return try await transcribeUpload(audioData: wav, filename: "audio.wav", language: language)
+    }
+
+    /// Transcribes an audio file from disk (used for meetings).
     public func transcribe(audioURL: URL, language: String? = nil) async throws -> TranscriptionOutput {
+        let data = try Data(contentsOf: audioURL)
+        return try await transcribeUpload(audioData: data, filename: audioURL.lastPathComponent, language: language)
+    }
+
+    private func transcribeUpload(audioData: Data, filename: String, language: String?) async throws -> TranscriptionOutput {
         guard config.isConfigured else { throw NanError.notConfigured }
 
         let boundary = "nanflow-\(UUID().uuidString)"
@@ -44,7 +66,6 @@ public final class NanClient: @unchecked Sendable {
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
-        let audioData = try Data(contentsOf: audioURL)
         var body = Data()
 
         func addField(_ name: String, _ value: String) {
@@ -58,7 +79,7 @@ public final class NanClient: @unchecked Sendable {
         addField("response_format", "verbose_json")
 
         body.append("--\(boundary)\r\n".data(using: .utf8)!)
-        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(audioURL.lastPathComponent)\"\r\n".data(using: .utf8)!)
+        body.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(filename)\"\r\n".data(using: .utf8)!)
         body.append("Content-Type: audio/wav\r\n\r\n".data(using: .utf8)!)
         body.append(audioData)
         body.append("\r\n--\(boundary)--\r\n".data(using: .utf8)!)

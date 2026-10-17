@@ -15,7 +15,8 @@ public final class DictationEngine: @unchecked Sendable {
     public var onResult: (@Sendable (HistoryEntry) -> Void)?
     public var onError: (@Sendable (String) -> Void)?
 
-    public var formattingEnabled = true
+    public var style: TextStyle = .natural
+    public var trimSilenceEnabled = true
 
     private let mic = MicRecorder()
     private let client = NanClient()
@@ -83,18 +84,19 @@ public final class DictationEngine: @unchecked Sendable {
                 return
             }
 
-            let tmpDir = URL(fileURLWithPath: NSTemporaryDirectory())
-            let wavURL = tmpDir.appendingPathComponent("nanflow-dict-\(UUID().uuidString).wav")
+            let trimmed = trimSilenceEnabled
+                ? AudioMixer.trimSilence(samples: recording.samples, sampleRate: recording.sampleRate)
+                : recording.samples
+            NFLog.write("dict: trimmed \(recording.samples.count) -> \(trimmed.count) samples")
             do {
-                try WavWriter.write(samples: recording.samples, sampleRate: recording.sampleRate, to: wavURL)
                 let t0 = Date()
-                let transcript = try await NanClient().transcribe(audioURL: wavURL)
+                let transcript = try await NanClient().transcribe(samples: trimmed, sampleRate: recording.sampleRate)
                 let t1 = Date()
 
                 let formattedText: String
-                if self.formattingEnabled, !transcript.text.isEmpty {
+                if self.style != .off, !transcript.text.isEmpty {
                     self.setState(.formatting)
-                    formattedText = try await Formatter.formatDictation(transcript.text)
+                    formattedText = try await Formatter.formatDictation(transcript.text, style: self.style)
                 } else {
                     formattedText = transcript.text
                 }
@@ -121,9 +123,7 @@ public final class DictationEngine: @unchecked Sendable {
                 }
                 self.setState(.idle)
                 self.onResult?(entry)
-                try? FileManager.default.removeItem(at: wavURL)
             } catch {
-                try? FileManager.default.removeItem(at: wavURL)
                 NFLog.write("dict: ERROR \(error)")
                 self.setState(.idle)
                 self.onError?("\(error.localizedDescription)")

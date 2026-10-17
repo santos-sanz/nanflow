@@ -27,7 +27,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.startHotkey(with: hk)
         }
 
-        NanClient().prewarm()
+        ProviderSettings.shared.prewarm()
         dictation.onStateChange = { [weak self] state in
             self?.dictationStateChanged(state)
         }
@@ -61,6 +61,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if settings.meetingsEnabled { detector.start() }
         checkPermissionsOnLaunch()
         refreshMenu()
+        settings.providerChanged()
+        // Onboarding: si el proveedor activo no tiene API key, abre el panel
+        if !ProviderSettings.shared.isConfigured() {
+            settingsWindow.show()
+        }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -102,6 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let stateItem = NSMenuItem(title: dictState, action: nil, keyEquivalent: "")
         stateItem.isEnabled = false
         menu.addItem(stateItem)
+        let modelItem = NSMenuItem(title: "Motor: \(ProviderSettings.shared.provider.label) · \(ProviderSettings.shared.llmModel(for: ProviderSettings.shared.provider))", action: nil, keyEquivalent: "")
+        modelItem.isEnabled = false
+        menu.addItem(modelItem)
         menu.addItem(.separator())
 
         if let current = detector.current {

@@ -1,28 +1,85 @@
 import Foundation
 
+public enum Provider: String, CaseIterable, Sendable {
+    case nan
+    case openrouter
+
+    public var label: String {
+        switch self {
+        case .nan: return "Nan"
+        case .openrouter: return "OpenRouter"
+        }
+    }
+
+    public var defaultBaseURL: String {
+        switch self {
+        case .nan: return "https://api.nan.builders/v1"
+        case .openrouter: return "https://openrouter.ai/api/v1"
+        }
+    }
+
+    public var defaultLLMModel: String {
+        switch self {
+        case .nan: return "qwen3.8-flash"
+        case .openrouter: return "deepseek/deepseek-v4.1-flash"
+        }
+    }
+
+    public var defaultSTTModel: String {
+        switch self {
+        case .nan: return "whisper"
+        case .openrouter: return "openai/whisper-large-v3-turbo"
+        }
+    }
+
+    public var envKeyPrefix: String {
+        self == .nan ? "NAN" : "OPENROUTER"
+    }
+
+    public var keychainAccount: String {
+        "provider.\(rawValue).api-key"
+    }
+
+    /// Nan exposes a single STT model; OpenRouter offers the OpenAI whisper family.
+    public var sttModelSelectable: Bool { self == .openrouter }
+
+    public static let openRouterSTTModels: [String] = [
+        "openai/whisper-large-v3-turbo",
+        "openai/whisper-large-v3",
+        "openai/whisper-1",
+    ]
+}
+
 public struct AppConfig: Sendable {
+    public var provider: Provider
     public var apiKey: String
     public var baseURL: String
     public var model: String
     public var whisperModel: String
+    /// True when the API key comes from .env (shown masked in the UI, not editable in place).
+    public var keyFromEnv: Bool
 
-    public init(apiKey: String = "", baseURL: String = "https://api.nan.builders/v1", model: String = "qwen3.8-flash", whisperModel: String = "whisper") {
+    public init(
+        provider: Provider = .nan,
+        apiKey: String = "",
+        baseURL: String? = nil,
+        model: String? = nil,
+        whisperModel: String? = nil,
+        keyFromEnv: Bool = false
+    ) {
+        self.provider = provider
         self.apiKey = apiKey
-        self.baseURL = baseURL
-        self.model = model
-        self.whisperModel = whisperModel
+        self.baseURL = baseURL ?? provider.defaultBaseURL
+        self.model = model ?? provider.defaultLLMModel
+        self.whisperModel = whisperModel ?? provider.defaultSTTModel
+        self.keyFromEnv = keyFromEnv
     }
 
     public var isConfigured: Bool { !apiKey.isEmpty && !baseURL.isEmpty }
 
+    /// Legacy loader: resolves the config for whatever provider is selected in ProviderSettings.
     public static func load() -> AppConfig {
-        let env = EnvLoader.load()
-        var cfg = AppConfig()
-        if let k = env["NAN_API_KEY"], !k.isEmpty { cfg.apiKey = k }
-        if let u = env["NAN_BASE_URL"], !u.isEmpty { cfg.baseURL = u }
-        if let m = env["NAN_MODEL"], !m.isEmpty { cfg.model = m }
-        if let w = env["NAN_WHISPER_MODEL"], !w.isEmpty { cfg.whisperModel = w }
-        return cfg
+        ProviderSettings.shared.effectiveConfig()
     }
 }
 
@@ -30,11 +87,11 @@ public enum EnvLoader {
     public static func load() -> [String: String] {
         var result: [String: String] = [:]
 
-        for (k, v) in ProcessInfo.processInfo.environment where k.hasPrefix("NAN_") {
+        for (k, v) in ProcessInfo.processInfo.environment
+        where k.hasPrefix("NAN_") || k.hasPrefix("OPENROUTER_") {
             result[k] = v
         }
 
-        let fm = FileManager.default
         var candidates: [URL] = [
             URL(fileURLWithPath: NSString(string: "~/.nanflow/.env").expandingTildeInPath),
             appSupportDir().appendingPathComponent(".env"),

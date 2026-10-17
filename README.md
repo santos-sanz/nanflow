@@ -1,87 +1,81 @@
-# Nanflow
-
 <p align="center">
-  <img src="https://img.shields.io/badge/platform-macOS%2014.2%2B-black?logo=apple" alt="macOS 14.2+">
-  <img src="https://img.shields.io/badge/Swift-6-blue?logo=swift" alt="Swift 6">
-  <img src="https://img.shields.io/badge/tests-22%2F22-brightgreen" alt="tests 22/22">
-  <img src="https://img.shields.io/badge/license-private-lightgrey" alt="license">
+  <img src="docs/logo.png" width="148" alt="Nanflow logo">
 </p>
 
-**Hold a key, speak, get perfectly formatted text anywhere on your Mac.**
+<h1 align="center">Nanflow</h1>
 
-Nanflow is a Wispr Flow–style voice dictation app for macOS. It captures your voice with a global hotkey, transcribes it with the Nan API's Whisper endpoint, polishes it with an LLM (punctuation, accents, filler removal, or a full formal/informal tone rewrite), and pastes it into whatever app you're typing in. It also detects meetings (Zoom, Teams, FaceTime, Webex, Google Meet in the browser), records their system + mic audio, and generates a transcript with a structured summary.
+<p align="center">
+  <strong>Hold a key. Speak. Get perfectly formatted text anywhere on your Mac.</strong>
+</p>
 
-## Demo
+<p align="center">
+  <img src="https://img.shields.io/badge/platform-macOS%2014.2%2B-black?logo=apple&logoColor=white" alt="macOS 14.2+">
+  <img src="https://img.shields.io/badge/Swift-6-orange?logo=swift&logoColor=white" alt="Swift 6">
+  <img src="https://img.shields.io/badge/tests-28%2F28-brightgreen" alt="tests 28/28">
+  <img src="https://img.shields.io/badge/dependencies-0-blueviolet" alt="zero dependencies">
+</p>
+
+---
+
+Nanflow is a **Wispr Flow–style voice dictation app** built natively for macOS. Hold a global hotkey, speak in Spanish or English, release — and a punctuation-perfect version of your words is pasted into whatever app you're typing in. It also **detects meetings** (Zoom, Teams, FaceTime, Webex, Google Meet in the browser), records their audio, and hands you a structured transcript with decisions and action items.
+
+Everything is orchestrated from a small menu-bar app with a native SwiftUI control panel. Audio capture runs locally; speech-to-text and text polishing go through your chosen provider — **Nan** or **OpenRouter**.
+
+## ✨ Features
+
+| | |
+|---|---|
+| 🎙️ **Hold-to-talk dictation** | Hold ⌘ right (or ⌥ right / Fn / F5), speak, release. A floating bubble shows the mic level while you talk. |
+| 🌍 **Spanish & English** | Language is detected per utterance; the formatter always answers in the language you spoke. |
+| ✨ **Text styles** | **Off** (raw transcript, no LLM), **Natural**, **Informal**, **Formal** — switchable from the menu bar or the panel. |
+| 🔵 **Automatic meetings** | Detects meetings by app or browser tab, records system audio + mic, then transcribes and summarizes: Resumen / Decisiones / Acciones. |
+| ⚡ **Low latency** | Silence trimming, in-memory WAV upload, TLS prewarm, latency-based provider routing. |
+| 🔀 **Two providers** | Nan or OpenRouter, with live model catalogs and per-provider selection. |
+| 🔒 **Privacy-first** | Audio travels only to your chosen API. Transcripts, meeting recordings and history never leave your Mac. |
+
+## 📸 Screenshots
 
 | Control panel | Dictation result |
-|---|---|
-| ![Nanflow settings panel](docs/screenshots/settings.png) | ![Dictation pasted into TextEdit](docs/screenshots/dictation.png) |
+|:---:|:---:|
+| ![Nanflow control panel](docs/screenshots/settings.png) | ![Dictation pasted into TextEdit](docs/screenshots/dictation.png) |
 
-The menu bar gives you quick control without opening the window:
+Quick controls live in the menu bar — no window needed:
 
-![Menu bar menu](docs/screenshots/menu.png)
+<p align="center"><img src="docs/screenshots/menu.png" width="420" alt="Menu bar menu"></p>
 
-## Providers
-
-Nanflow works with any OpenAI-compatible gateway. Pick your provider on first launch (the panel opens automatically if no API key is configured):
-
-| | **Nan** | **OpenRouter** |
-|---|---|---|
-| API key | `NAN_API_KEY` in `.env`, or entered in the panel (Keychain) | `OPENROUTER_API_KEY` in `.env`, or Keychain |
-| Speech-to-text | Single Whisper endpoint — **fixed**, shown for clarity | **Selectable**: `whisper-large-v3-turbo`, `whisper-large-v3`, `whisper-1` |
-| LLM | Selectable (catalog fetched live) | **Selectable** (340+ models fetched live) |
-| Thinking suppression | `chat_template_kwargs` | `reasoning: {enabled: false, exclude: true}` |
-
-- Keys that already live in `.env` appear **masked** in the panel (`sk-or-…472d`) with a `from .env` badge; keys entered in the UI are stored in the **macOS Keychain**.
-- Model lists are fetched from the provider's `/models` catalog with a refresh button; your selection persists per provider.
-- Switching provider takes effect immediately — the next dictation uses it.
-
-## Features
-
-- **🎙️ Hold-to-talk dictation** — hold ⌘ right (configurable to ⌥ right, Fn or F5), speak, release. A floating bubble shows recording state and mic level; the polished text is pasted at your cursor.
-- **🌍 Spanish & English** — language is detected per utterance; the formatter always answers in the language you spoke.
-- **✨ Text styles** — choose how the LLM rewrites your speech:
-  | Style | What it does | LLM call |
-  |---|---|---|
-  | **Off** | Pastes the raw Whisper transcript | ❌ none — minimum latency |
-  | **Natural** (default) | Punctuation, accents, filler removal, verbatim meaning | ✅ |
-  | **Informal** | Casual, friendly tone — like texting a teammate | ✅ |
-  | **Formal** | Professional register for emails and reports | ✅ |
-- **🔵 Automatic meetings** — detects meetings by app bundle ID or `meet.google.com` browser tabs, records system audio + mic, then transcribes and summarizes with decisions and action items.
-- **⚡ Fast by design** — silence trimming, in-memory WAV upload, TLS prewarm, and style Off all cut end-to-end latency.
-- **🔒 Privacy-first** — audio only travels to the Nan API (Whisper + LLM). Transcripts, meeting recordings and history stay on your Mac.
-- **🖼️ Control panel** — a SwiftUI settings window to switch styles, hotkey, meeting behavior, check permissions and browse recent history.
-
-## Latency
-
-Measured end-to-end (release hotkey → text pasted), dictation clip ~7 s of speech, in-app:
-
-| Mode | Total | Breakdown |
-|---|---|---|
-| Style **Off** | ~3.5 s | whisper only (upload + server) |
-| Style **Natural** | ~4.1 s | whisper + LLM polish (connection prewarmed) |
-
-Optimizations included: leading/trailing silence trim (−13 % upload), PCM16 WAV built in memory (no temp files), DNS/TLS prewarm at launch, and skipping the LLM entirely when style is Off.
-
-## Quick start
+## 🚀 Quick start
 
 ```bash
-# Build the app (requires Xcode / Command Line Tools)
-./scripts/build-app.sh release
+./scripts/build-app.sh release   # build + sign + bundle
 open build/Nanflow.app
 ```
 
-On first launch, grant:
+First launch asks for:
 
 1. **Accessibility** — global hotkey + pasting (System Settings → Privacy & Security → Accessibility).
-2. **Microphone** — capturing your voice (prompted automatically).
+2. **Microphone** — prompted automatically when you first dictate.
 3. **Notifications** — meeting alerts (optional).
 
-System audio capture uses a **Core Audio Process Tap** — it does **not** need Screen Recording permission.
+> System audio capture uses a **Core Audio Process Tap** — it does **not** need Screen Recording permission.
 
-## Configuration
+## ⚙️ Providers
 
-`.env` is looked up in: `~/.nanflow/.env` → `~/Library/Application Support/Nanflow/.env` → app bundle `Resources/.env` → current directory.
+Pick your provider on first launch; the control panel opens automatically if no API key is configured.
+
+| | **Nan** | **OpenRouter** |
+|---|---|---|
+| API key | `NAN_API_KEY` in `.env`, or entered in the panel → Keychain | `OPENROUTER_API_KEY` in `.env`, or Keychain |
+| Speech-to-text | Single Whisper endpoint — **fixed**, shown for clarity | **Selectable**: `whisper-large-v3-turbo`, `whisper-large-v3`, `whisper-1` |
+| LLM | Selectable (live catalog) | **Selectable** (340+ models, live catalog) |
+| Routing | — | Always routed to the **lowest-latency** provider for the selected model |
+
+- Keys already in `.env` appear **masked** in the panel (`sk-or-…472d`) with a `from .env` badge.
+- Keys typed into the panel are stored in the **macOS Keychain** — never in plaintext.
+- Model lists load from the provider's catalog with a refresh button; selections persist per provider and apply immediately.
+
+### Configuration
+
+`.env` lookup order: `~/.nanflow/.env` → `~/Library/Application Support/Nanflow/.env` → app bundle `Resources/.env` → current directory.
 
 ```ini
 # Nan (default provider)
@@ -97,11 +91,20 @@ STT_OPENROUTER_MODEL=openai/whisper-large-v3-turbo
 LLM_OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash
 ```
 
-Model choices made in the panel override the `.env` values and persist per provider (LLM and STT separately).
+Panel choices override `.env` and persist per provider (LLM and STT separately).
 
-## Architecture
+## ⏱️ Latency
 
-Native Swift, no external dependencies:
+Measured end-to-end on an M3 (release hotkey → text pasted, ~7 s clip):
+
+| Mode | Total | Notes |
+|---|---|---|
+| Style **Off** | ~3.5 s | Whisper only |
+| Style **Natural** | ~4.1 s | Whisper + LLM polish, connection prewarmed |
+
+What makes it fast: leading/trailing silence trim (−13 % upload), PCM16 WAV built in memory (no temp files), DNS/TLS prewarm at launch, LLM skipped when style is Off, and OpenRouter requests routed with `provider.sort = latency`.
+
+## 🏗️ Architecture
 
 ```
 ┌─ nanflow (menu bar app) ────────────────────────────────────────────┐
@@ -112,8 +115,8 @@ Native Swift, no external dependencies:
 │  HotKeyMonitor (CGEventTap, dedicated thread)                       │
 │  DictationEngine  ──► MicRecorder (AVAudioEngine → 16 kHz)          │
 │      │  trimSilence ─► WavEncoder (in-memory PCM16)                 │
-│      │             ─► NanClient.transcribe   ──►  Nan API (whisper) │
-│      └── Formatter (off/natural/informal/formal) ──►  Nan API (LLM) │
+│      │             ─► NanClient.transcribe   ──►  STT API           │
+│      └── Formatter (off/natural/informal/formal) ──►  LLM API       │
 │  MeetingDetector (bundle IDs + browser tabs, 2 s poll)              │
 │  MeetingEngine ──► SystemAudioRecorder (Core Audio Process Tap)     │
 │      │            + MicRecorder ─► AudioMixer ─► WAV on disk        │
@@ -125,29 +128,29 @@ Native Swift, no external dependencies:
 ```
 
 - **NanflowCore** — testable library (no GUI required)
-- **nanflow** — menu bar app: status item, SwiftUI control panel, floating recording bubble
+- **nanflow** — menu bar app: status item, SwiftUI control panel, floating bubble
 - **nanflow-cli** — GUI-free test harness
 
-## Development
+## 🛠️ Development
 
 ```bash
 swift build -c release          # build everything
-swift test                      # 22 unit tests
-./scripts/build-app.sh release  # build/Nanflow.app (signed with "Nanflow Dev")
+swift test                      # 28 unit tests
+./scripts/build-app.sh release  # build/Nanflow.app, signed "Nanflow Dev"
 
 # CLI harness
 .build/release/nanflow-cli env                                      # config check
 .build/release/nanflow-cli test-llm                                 # LLM ping
 .build/release/nanflow-cli models --provider openrouter             # live model catalog
 .build/release/nanflow-cli transcribe /tmp/audio.wav                # whisper via active provider
-.build/release/nanflow-cli pipeline /tmp/audio.wav --provider openrouter  # transcribe + format with timings
+.build/release/nanflow-cli pipeline /tmp/audio.wav --provider openrouter  # transcribe + format, timed
 .build/release/nanflow-cli record-test --secs 3                     # real mic → full pipeline
 .build/release/nanflow-cli tap-test                                 # system audio → whisper
 .build/release/nanflow-cli meeting-test --secs 8                    # meeting engine end-to-end
 .build/release/nanflow-cli detect                                   # meeting detection status
 ```
 
-Runtime state lives in `~/Library/Application Support/Nanflow/` (`history.json`, `meetings/`, `nanflow.log`). Event-tap debugging: `defaults write com.nanflow.nanflow nanflow.debug.taplog -bool true`.
+Runtime state: `~/Library/Application Support/Nanflow/` (`history.json`, `meetings/`, `nanflow.log`). Event-tap debug: `defaults write com.nanflow.nanflow nanflow.debug.taplog -bool true`.
 
 ### Testing without a mic
 
@@ -161,24 +164,24 @@ osascript -e 'tell application "System Events" to key up 54'
 tail ~/Library/Application\ Support/Nanflow/nanflow.log
 ```
 
-## Troubleshooting
+## 🔧 Troubleshooting
 
 | Symptom | Fix |
 |---|---|
 | Hotkey does nothing | Accessibility permission off — re-toggle the Nanflow row. Rebuilds keep permissions thanks to the stable "Nanflow Dev" signing identity. |
 | Recording but empty transcript | Mic permission, or the bubble captured silence. Check `nanflow.log`. |
-| Formatting feels slow | Set style **Off**, or use a non-reasoning model (`qwen3.8-flash` on Nan; on OpenRouter the client sends `reasoning: {enabled: false}` automatically). |
+| Formatting feels slow | Set style **Off**, or pick a non-reasoning model. On OpenRouter the client disables thinking automatically. |
 | Meeting not detected | Supported: Zoom, Teams, FaceTime, Webex, Whereby, Google Meet tabs in Chrome/Edge/Brave. |
 | Whisper says "en" for Spanish text | Fixed by the `looksSpanish` heuristic; text quality is unaffected. |
-| Provider panel shows no models | Network hiccup — hit the refresh button; the current model stays usable regardless. |
+| Panel shows no models | Network hiccup — hit the refresh button; your current model keeps working. |
 
-## Roadmap
+## 🗺️ Roadmap
 
 - [ ] Meeting summary editor window
-- [ ] Custom dictionary for names/terms
+- [ ] Custom dictionary for names and terms
 - [ ] Voice commands ("nueva línea", "punto y aparte")
 - [ ] PDF export for meeting reports
 
 ---
 
-Built as an educational clone of Wispr Flow. The original app (Electron) was analyzed via reverse engineering of its `app.asar` bundle to replicate feature behavior; all code here is original and Swift-native.
+<p align="center"><sub>Built as an educational clone of Wispr Flow. The original app (Electron) was analyzed via reverse engineering of its <code>app.asar</code> bundle to replicate feature behavior; all code here is original and Swift-native.</sub></p>

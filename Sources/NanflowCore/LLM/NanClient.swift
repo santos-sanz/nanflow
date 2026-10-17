@@ -75,6 +75,10 @@ public final class NanClient: @unchecked Sendable {
         }
 
         addField("model", config.whisperModel)
+        if config.provider == .openrouter {
+            // Enruta la transcripción al proveedor con menor latencia disponible
+            addField("provider", "{\"sort\":\"latency\"}")
+        }
         if let language { addField("language", language) }
         addField("response_format", "verbose_json")
 
@@ -142,6 +146,8 @@ public final class NanClient: @unchecked Sendable {
             payload["chat_template_kwargs"] = ["enable_thinking": false]
         case .openrouter:
             payload["reasoning"] = ["exclude": true, "enabled": false]
+            // Enruta siempre al proveedor con menor latencia disponible para el modelo
+            payload["provider"] = ["sort": "latency"]
         }
         if jsonMode { payload["response_format"] = ["type": "json_object"] }
 

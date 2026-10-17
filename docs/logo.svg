@@ -1,0 +1,33 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#1E3A8A"/>
+      <stop offset="55%" stop-color="#2563EB"/>
+      <stop offset="100%" stop-color="#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="sheen" x1="0%" y1="0%" x2="0%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF" stop-opacity="0.20"/>
+      <stop offset="55%" stop-color="#FFFFFF" stop-opacity="0.0"/>
+    </linearGradient>
+    <linearGradient id="wave" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#DDEBFF"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Squircle app background -->
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="232" fill="url(#sheen)"/>
+
+  <!-- Voice waveform -->
+  <g stroke="url(#wave)" stroke-width="54" stroke-linecap="round">
+    <line x1="216" y1="456" x2="216" y2="568"/>
+    <line x1="344" y1="368" x2="344" y2="656"/>
+    <line x1="472" y1="272" x2="472" y2="752"/>
+    <line x1="600" y1="368" x2="600" y2="656"/>
+    <line x1="728" y1="456" x2="728" y2="568"/>
+  </g>
+
+  <!-- Text caret: speech becomes text at your cursor -->
+  <rect x="806" y="392" width="26" height="240" rx="13" fill="#FFFFFF" opacity="0.95"/>
+</svg>

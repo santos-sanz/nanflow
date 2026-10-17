@@ -12,21 +12,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let detector = MeetingDetector()
     private let hotkey = HotKeyMonitor()
     private var meetingRecordingActive = false
-
-    private let defaults = UserDefaults.standard
-
-    private enum Keys {
-        static let hotkey = "nanflow.hotkey"
-        static let formatting = "nanflow.formatting"
-        static let meetingsEnabled = "nanflow.meetings"
-        static let meetingsAutoRecord = "nanflow.meetings.autorecord"
-    }
+    private let settings = SettingsStore.shared
+    private let settingsWindow = SettingsWindowController()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NFLog.write("app: launch · AX=\(HotKeyMonitor.hasAccessibilityPermission()) · mic=\(AVCaptureDevice.authorizationStatus(for: .audio).rawValue)")
         DictationBridge.engine = dictation
 
-        dictation.formattingEnabled = defaults.object(forKey: Keys.formatting) as? Bool ?? true
+        settings.dictation = dictation
+        settings.meetings = meetings
+        settings.detector = detector
+        settings.syncEngines()
+        settings.onHotKeyChanged = { [weak self] hk in
+            self?.startHotkey(with: hk)
+        }
+
+        NanClient().prewarm()
         dictation.onStateChange = { [weak self] state in
             self?.dictationStateChanged(state)
         }
@@ -56,8 +57,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
 
         setupStatusItem()
-        startHotkey()
-        if meetingsDetectionEnabled { detector.start() }
+        startHotkey(with: settings.hotKey)
+        if settings.meetingsEnabled { detector.start() }
         checkPermissionsOnLaunch()
         refreshMenu()
     }
@@ -69,26 +70,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     // MARK: - Settings
-
-    private var selectedHotkey: HotKey {
-        get { HotKey(rawValue: defaults.string(forKey: Keys.hotkey) ?? "") ?? .rightCommand }
-        set { defaults.set(newValue.rawValue, forKey: Keys.hotkey) }
-    }
-
-    private var formattingEnabled: Bool {
-        get { defaults.object(forKey: Keys.formatting) as? Bool ?? true }
-        set { defaults.set(newValue, forKey: Keys.formatting); dictation.formattingEnabled = newValue }
-    }
-
-    private var meetingsDetectionEnabled: Bool {
-        get { defaults.object(forKey: Keys.meetingsEnabled) as? Bool ?? true }
-        set { defaults.set(newValue, forKey: Keys.meetingsEnabled) }
-    }
-
-    private var meetingsAutoRecord: Bool {
-        get { defaults.object(forKey: Keys.meetingsAutoRecord) as? Bool ?? true }
-        set { defaults.set(newValue, forKey: Keys.meetingsAutoRecord) }
-    }
 
     // MARK: - Status bar & menu
 
@@ -116,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         switch dictation.currentState {
         case .recording: dictState = "🎙️ Grabando…"
         case .transcribing, .formatting: dictState = "⚡️ Procesando…"
-        case .idle: dictState = "Dictado: activo (\(selectedHotkey.label))"
+        case .idle: dictState = "Dictado: activo (\(settings.hotKey.label))"
         }
         let stateItem = NSMenuItem(title: dictState, action: nil, keyEquivalent: "")
         stateItem.isEnabled = false
@@ -134,22 +115,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        menu.addItem({
-            let item = NSMenuItem(title: "Formato con IA", action: #selector(toggleFormatting), keyEquivalent: "")
+        let settingsItem = NSMenuItem(title: "Ajustes…", action: #selector(openSettings), keyEquivalent: ",")
+        settingsItem.target = self
+        menu.addItem(settingsItem)
+
+        let styleItem = NSMenuItem(title: "Estilo del texto", action: nil, keyEquivalent: "")
+        let styleMenu = NSMenu()
+        for s in TextStyle.allCases {
+            let item = NSMenuItem(title: s.label, action: #selector(changeStyle(_:)), keyEquivalent: "")
             item.target = self
-            item.state = formattingEnabled ? .on : .off
-            return item
-        }())
+            item.representedObject = s.rawValue
+            item.state = s == settings.style ? .on : .off
+            styleMenu.addItem(item)
+        }
+        styleItem.submenu = styleMenu
+        menu.addItem(styleItem)
+
         menu.addItem({
             let item = NSMenuItem(title: "Detectar reuniones", action: #selector(toggleMeetings), keyEquivalent: "")
             item.target = self
-            item.state = meetingsDetectionEnabled ? .on : .off
+            item.state = settings.meetingsEnabled ? .on : .off
             return item
         }())
         menu.addItem({
             let item = NSMenuItem(title: "Grabar reuniones automáticamente", action: #selector(toggleAutoRecord), keyEquivalent: "")
             item.target = self
-            item.state = meetingsAutoRecord ? .on : .off
+            item.state = settings.meetingsAutoRecord ? .on : .off
             return item
         }())
 
@@ -159,7 +150,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             let item = NSMenuItem(title: hk.label, action: #selector(changeHotkey(_:)), keyEquivalent: "")
             item.target = self
             item.representedObject = hk.rawValue
-            item.state = hk == selectedHotkey ? .on : .off
+            item.state = hk == settings.hotKey ? .on : .off
             shortcutMenu.addItem(item)
         }
         shortcutItem.submenu = shortcutMenu
@@ -225,7 +216,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Actions
 
-    @objc private func toggleFormatting() { formattingEnabled.toggle(); refreshMenu() }
+    @objc private func openSettings() { settingsWindow.show(); refreshMenu() }
+
+    @objc private func changeStyle(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let st = TextStyle(rawValue: raw) else { return }
+        settings.style = st
+        refreshMenu()
+    }
 
     private static var launchAtLoginEnabled: Bool {
         (try? SMAppService.mainApp.status) == .enabled
@@ -244,16 +241,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshMenu()
     }
     @objc private func toggleMeetings() {
-        meetingsDetectionEnabled.toggle()
-        meetingsDetectionEnabled ? detector.start() : detector.stop()
+        settings.meetingsEnabled.toggle()
         refreshMenu()
     }
-    @objc private func toggleAutoRecord() { meetingsAutoRecord.toggle(); refreshMenu() }
+    @objc private func toggleAutoRecord() { settings.meetingsAutoRecord.toggle(); refreshMenu() }
 
     @objc private func changeHotkey(_ sender: NSMenuItem) {
         guard let raw = sender.representedObject as? String, let hk = HotKey(rawValue: raw) else { return }
-        selectedHotkey = hk
-        startHotkey()
+        settings.hotKey = hk
         refreshMenu()
     }
 
@@ -289,7 +284,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - Dictation flow
 
-    private func startHotkey() {
+    private func startHotkey(with hk: HotKey) {
         hotkey.onPress = { [weak self] in
             guard let self else { return }
             let p = NSEvent.mouseLocation
@@ -302,7 +297,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self.bubble.showProcessing()
             self.dictation.endDictation()
         }
-        hotkey.start(hotKey: selectedHotkey)
+        hotkey.start(hotKey: hk)
     }
 
     private func dictationStateChanged(_ state: DictationEngine.State) {
@@ -322,7 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func meetingDetected(_ detected: DetectedMeeting) {
         statusItem.button?.image = NSImage(systemSymbolName: "person.2.wave.2", accessibilityDescription: "Reunión")
-        if meetingsAutoRecord {
+        if settings.meetingsAutoRecord {
             meetingRecordingActive = true
             meetings.startRecording(app: detected.appName)
             notify(title: "Reunión detectada", body: "Grabando \(detected.appName). Se detendrá al terminar.")

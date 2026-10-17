@@ -2,6 +2,34 @@ import AVFoundation
 import Foundation
 
 public enum AudioMixer {
+    /// Trims leading/trailing silence (below RMS threshold) with padding, to cut upload and whisper time.
+    /// Window = 25 ms. Returns the original array if everything looks like speech (or all silence).
+    public static func trimSilence(samples: [Float], sampleRate: Double, threshold: Float = 0.008) -> [Float] {
+        guard samples.count > 64 else { return samples }
+        let window = max(1, Int(sampleRate * 0.025))
+        let pad = max(1, Int(sampleRate * 0.12))
+
+        func rms(_ start: Int) -> Float {
+            let end = min(start + window, samples.count)
+            guard end > start else { return 0 }
+            var acc: Float = 0
+            for i in start..<end { acc += samples[i] * samples[i] }
+            return sqrt(acc / Float(end - start))
+        }
+
+        var first = 0
+        while first + window <= samples.count, rms(first) < threshold {
+            first += window
+        }
+        var last = samples.count - window
+        while last >= 0, rms(last) < threshold {
+            last -= window
+        }
+        guard last >= first else { return samples } // todo silencio: dejar como está
+        let lo = max(0, first - pad)
+        let hi = min(samples.count, last + window + pad)
+        return Array(samples[lo..<hi])
+    }
     /// Resamples mono Float samples to the target rate using AVAudioConverter (linear interpolation quality).
     public static func resample(samples: [Float], fromRate: Double, toRate: Double) -> [Float] {
         guard fromRate != toRate, !samples.isEmpty else { return samples }

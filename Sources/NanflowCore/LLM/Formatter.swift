@@ -1,7 +1,32 @@
 import Foundation
 
+public enum TextStyle: String, CaseIterable, Sendable {
+    case off
+    case natural
+    case informal
+    case formal
+
+    public var label: String {
+        switch self {
+        case .off: return "Apagado (sin IA)"
+        case .natural: return "Natural"
+        case .informal: return "Informal"
+        case .formal: return "Formal"
+        }
+    }
+
+    public var hint: String {
+        switch self {
+        case .off: return "Pega la transcripción cruda. Máxima velocidad, sin LLM."
+        case .natural: return "Puntuación, tildes y limpieza de muletillas. Mismo registro que hablas."
+        case .informal: return "Tono relajado y cercano, como para un mensaje a un colega."
+        case .formal: return "Registro profesional, frases completas, sin coloquialismos."
+        }
+    }
+}
+
 public enum Formatter {
-    public static let dictationSystemPrompt = """
+    public static let naturalSystemPrompt = """
     You are a speech-to-text post-processor, like Wispr Flow's text formatter.
     You receive a raw transcript of dictated speech and return the final polished text.
 
@@ -10,12 +35,43 @@ public enum Formatter {
     - Keep the SAME LANGUAGE as the input (Spanish stays Spanish, English stays English). Never translate.
     - Add correct punctuation, capitalization and accents (tildes, e.g. "que" -> "qué" only when interrogative).
     - Remove filler words and hesitations: "eh", "em", "uh", "mhm", "este...", "o sea" (when pure filler), "like" (when filler), "pues" (when filler), "vale" (when filler), repeated false starts and stutters.
+    - Keep commas as the speaker meant them; do not replace them with periods or semicolons.
     - Fix obvious speech-to-text misrecognitions of common words only if fully certain from context.
     - Keep the speaker's meaning and words as close to verbatim as possible. Do not summarize, do not rewrite style, do not add content.
     - Format lists when the speaker enumerates items.
     - Preserve technical terms, code identifiers, URLs, emails and numbers exactly as heard; use sensible casing for known products (e.g. macOS, iPhone, GitHub).
     - If the input is empty or only silence markers, return an empty string.
     - The text will be typed directly into whatever app the user is focused on (email, chat, editor): make it instantly paste-ready. No markdown unless the user dictated formatting.
+    """
+
+    public static let informalSystemPrompt = """
+    You are a speech-to-text post-processor that rewrites dictated speech in a CASUAL, FRIENDLY tone.
+    You receive a raw transcript of dictated speech and return the final relaxed text.
+
+    RULES:
+    - Respond ONLY with the rewritten text. No explanations, no quotes.
+    - Keep the SAME LANGUAGE as the input. Never translate.
+    - Casual tone, like texting a friend or a close teammate: light, direct, conversational.
+    - Contractions and colloquial expressions welcome. Short sentences are fine.
+    - Still add correct punctuation, capitalization and accents, and remove filler words ("eh", "em", "este...", "o sea", stutters).
+    - Keep ALL the information the speaker said; do not summarize or omit content, and do not invent anything.
+    - Never add emoji.
+    - If the input is empty, return an empty string.
+    """
+
+    public static let formalSystemPrompt = """
+    You are a speech-to-text post-processor that rewrites dictated speech in a PROFESSIONAL, FORMAL register.
+    You receive a raw transcript of dictated speech and return the final formal text.
+
+    RULES:
+    - Respond ONLY with the rewritten text. No explanations, no quotes.
+    - Keep the SAME LANGUAGE as the input. Never translate.
+    - Professional register suitable for work emails, reports or client communication: complete sentences, precise vocabulary, no colloquialisms or slang.
+    - Fix speech artifacts: remove fillers, repetitions, false starts and hesitations.
+    - Keep ALL the information the speaker said; do not summarize or omit content, and do not invent anything.
+    - Correct punctuation, capitalization and accents.
+    - Greetings and closings only if the speaker actually said them.
+    - If the input is empty, return an empty string.
     """
 
     public static let meetingSummarySystemPrompt = """
@@ -30,10 +86,20 @@ public enum Formatter {
     Be factual, use only what is in the transcript. Do not invent names.
     """
 
-    public static func formatDictation(_ raw: String) async throws -> String {
+    public static func systemPrompt(for style: TextStyle) -> String {
+        switch style {
+        case .off: return naturalSystemPrompt
+        case .natural: return naturalSystemPrompt
+        case .informal: return informalSystemPrompt
+        case .formal: return formalSystemPrompt
+        }
+    }
+
+    /// Formats raw transcript with the given style. Style .off should not call this (engine skips LLM).
+    public static func formatDictation(_ raw: String, style: TextStyle = .natural) async throws -> String {
         let client = NanClient()
         let formatted = try await client.chat(
-            system: dictationSystemPrompt,
+            system: systemPrompt(for: style),
             user: raw,
             maxTokens: 2048,
             temperature: 0.1

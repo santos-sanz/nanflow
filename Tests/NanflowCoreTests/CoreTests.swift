@@ -158,8 +158,59 @@ final class MeetingDetectorTests: XCTestCase {
 }
 
 final class FormatterTests: XCTestCase {
-    func testSystemPromptMentionsLanguage() {
-        XCTAssertTrue(Formatter.dictationSystemPrompt.contains("SAME LANGUAGE"))
+    func testStylePrompts() {
+        XCTAssertTrue(Formatter.systemPrompt(for: .natural).contains("SAME LANGUAGE"))
+        XCTAssertTrue(Formatter.systemPrompt(for: .informal).contains("CASUAL"))
+        XCTAssertTrue(Formatter.systemPrompt(for: .formal).contains("PROFESSIONAL"))
+        // .off comparte el prompt natural pero el motor no debe llamar al LLM
+        XCTAssertTrue(Formatter.systemPrompt(for: .off).contains("SAME LANGUAGE"))
         XCTAssertTrue(Formatter.meetingSummarySystemPrompt.contains("markdown"))
+    }
+
+    func testStyleCases() {
+        XCTAssertEqual(TextStyle.allCases.count, 4)
+        XCTAssertTrue(TextStyle.off.label.contains("sin IA"))
+    }
+}
+
+final class WavEncoderTests: XCTestCase {
+    func testProducesValidWavHeader() {
+        let data = WavEncoder.encode(samples: [0.0, 0.5, -0.5], sampleRate: 16_000)
+        XCTAssertEqual(String(data: data.prefix(4), encoding: .ascii), "RIFF")
+        XCTAssertEqual(String(data: data.subdata(in: 8..<12), encoding: .ascii), "WAVE")
+        XCTAssertEqual(data.count, 44 + 3 * 2)
+    }
+
+    func testClipping() {
+        let data = WavEncoder.encode(samples: [2.0, -2.0], sampleRate: 16_000)
+        let pcm = data.subdata(in: 44..<48)
+        let v0 = Int16(littleEndian: pcm.prefix(2).withUnsafeBytes { $0.load(as: Int16.self) })
+        let v1 = Int16(littleEndian: pcm.suffix(2).withUnsafeBytes { $0.load(as: Int16.self) })
+        XCTAssertEqual(v0, 32767)
+        XCTAssertEqual(v1, -32767)
+    }
+}
+
+final class TrimSilenceTests: XCTestCase {
+    func testTrimsLeadingAndTrailingSilence() {
+        var samples = [Float](repeating: 0, count: 8_000)          // 0.5s silence @16k
+        samples += (0..<16_000).map { _ in Float.random(in: -0.5...0.5) } // 1s speech
+        samples += [Float](repeating: 0, count: 8_000)             // 0.5s silence
+        let trimmed = AudioMixer.trimSilence(samples: samples, sampleRate: 16_000)
+        XCTAssertLessThan(trimmed.count, samples.count)
+        // 1s de habla (16000) + padding en ambos lados (2 x 0.12s = 3840)
+        XCTAssertTrue((19_500...20_000).contains(trimmed.count), "trimmed=\(trimmed.count)")
+    }
+
+    func testKeepsAllSpeech() {
+        let speech = (0..<16_000).map { _ in Float.random(in: -0.5...0.5) }
+        let trimmed = AudioMixer.trimSilence(samples: speech, sampleRate: 16_000)
+        XCTAssertEqual(trimmed.count, speech.count)
+    }
+
+    func testAllSilenceReturnsOriginal() {
+        let silence = [Float](repeating: 0, count: 4_000)
+        let trimmed = AudioMixer.trimSilence(samples: silence, sampleRate: 16_000)
+        XCTAssertEqual(trimmed, silence)
     }
 }

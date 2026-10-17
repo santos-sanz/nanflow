@@ -14,6 +14,7 @@ BIN="$(swift build -c "$CONFIG" --show-bin-path)"
 cp "$BIN/nanflow" "$APP_DIR/Contents/MacOS/Nanflow"
 
 cp scripts/Info.plist "$APP_DIR/Contents/Info.plist"
+cp scripts/AppIcon.icns "$APP_DIR/Contents/Resources/AppIcon.icns"
 
 # Copy .env inside the bundle directory so the app finds it (also reads ~/.nanflow/.env and ~/Library/Application Support/Nanflow/.env)
 [ -f .env ] && cp .env "$APP_DIR/Contents/Resources/.env" || true

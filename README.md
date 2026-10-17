@@ -21,6 +21,21 @@ The menu bar gives you quick control without opening the window:
 
 ![Menu bar menu](docs/screenshots/menu.png)
 
+## Providers
+
+Nanflow works with any OpenAI-compatible gateway. Pick your provider on first launch (the panel opens automatically if no API key is configured):
+
+| | **Nan** | **OpenRouter** |
+|---|---|---|
+| API key | `NAN_API_KEY` in `.env`, or entered in the panel (Keychain) | `OPENROUTER_API_KEY` in `.env`, or Keychain |
+| Speech-to-text | Single Whisper endpoint — **fixed**, shown for clarity | **Selectable**: `whisper-large-v3-turbo`, `whisper-large-v3`, `whisper-1` |
+| LLM | Selectable (catalog fetched live) | **Selectable** (340+ models fetched live) |
+| Thinking suppression | `chat_template_kwargs` | `reasoning: {enabled: false, exclude: true}` |
+
+- Keys that already live in `.env` appear **masked** in the panel (`sk-or-…472d`) with a `from .env` badge; keys entered in the UI are stored in the **macOS Keychain**.
+- Model lists are fetched from the provider's `/models` catalog with a refresh button; your selection persists per provider.
+- Switching provider takes effect immediately — the next dictation uses it.
+
 ## Features
 
 - **🎙️ Hold-to-talk dictation** — hold ⌘ right (configurable to ⌥ right, Fn or F5), speak, release. A floating bubble shows recording state and mic level; the polished text is pasted at your cursor.
@@ -69,11 +84,20 @@ System audio capture uses a **Core Audio Process Tap** — it does **not** need 
 `.env` is looked up in: `~/.nanflow/.env` → `~/Library/Application Support/Nanflow/.env` → app bundle `Resources/.env` → current directory.
 
 ```ini
+# Nan (default provider)
 NAN_API_KEY=sk-...
 NAN_BASE_URL=https://api.nan.builders/v1
-NAN_MODEL=qwen3.8-flash          # any non-reasoning chat model works
-NAN_WHISPER_MODEL=whisper
+NAN_MODEL=qwen3.8-flash            # default LLM (also selectable in the panel)
+NAN_WHISPER_MODEL=whisper          # fixed single STT endpoint
+
+# OpenRouter (alternative provider)
+OPENROUTER_API_KEY=sk-or-v1-...
+OPENROUTER_BASE_URL=https://openrouter.ai/api/v1
+STT_OPENROUTER_MODEL=openai/whisper-large-v3-turbo
+LLM_OPENROUTER_MODEL=deepseek/deepseek-v4.1-flash
 ```
+
+Model choices made in the panel override the `.env` values and persist per provider (LLM and STT separately).
 
 ## Architecture
 
@@ -95,6 +119,8 @@ Native Swift, no external dependencies:
 │      │            + MicRecorder ─► AudioMixer ─► WAV on disk        │
 │      └──► transcribe + summarize ─► HistoryStore (local JSON)       │
 │  TextInserter (clipboard backup → ⌘V → restore)                     │
+│  ProviderSettings ──► Nan/OpenRouter keys (Keychain > .env),        │
+│                       model selection, live catalog fetch           │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -110,14 +136,15 @@ swift test                      # 22 unit tests
 ./scripts/build-app.sh release  # build/Nanflow.app (signed with "Nanflow Dev")
 
 # CLI harness
-.build/release/nanflow-cli env                        # config check
-.build/release/nanflow-cli test-llm                   # LLM ping
-.build/release/nanflow-cli transcribe /tmp/audio.wav  # whisper via Nan
-.build/release/nanflow-cli pipeline /tmp/audio.wav    # transcribe + format, with timings
-.build/release/nanflow-cli record-test --secs 3       # real mic → full pipeline
-.build/release/nanflow-cli tap-test                   # system audio → whisper
-.build/release/nanflow-cli meeting-test --secs 8      # meeting engine end-to-end
-.build/release/nanflow-cli detect                     # meeting detection status
+.build/release/nanflow-cli env                                      # config check
+.build/release/nanflow-cli test-llm                                 # LLM ping
+.build/release/nanflow-cli models --provider openrouter             # live model catalog
+.build/release/nanflow-cli transcribe /tmp/audio.wav                # whisper via active provider
+.build/release/nanflow-cli pipeline /tmp/audio.wav --provider openrouter  # transcribe + format with timings
+.build/release/nanflow-cli record-test --secs 3                     # real mic → full pipeline
+.build/release/nanflow-cli tap-test                                 # system audio → whisper
+.build/release/nanflow-cli meeting-test --secs 8                    # meeting engine end-to-end
+.build/release/nanflow-cli detect                                   # meeting detection status
 ```
 
 Runtime state lives in `~/Library/Application Support/Nanflow/` (`history.json`, `meetings/`, `nanflow.log`). Event-tap debugging: `defaults write com.nanflow.nanflow nanflow.debug.taplog -bool true`.
@@ -140,9 +167,10 @@ tail ~/Library/Application\ Support/Nanflow/nanflow.log
 |---|---|
 | Hotkey does nothing | Accessibility permission off — re-toggle the Nanflow row. Rebuilds keep permissions thanks to the stable "Nanflow Dev" signing identity. |
 | Recording but empty transcript | Mic permission, or the bubble captured silence. Check `nanflow.log`. |
-| Formatting feels slow | Set style **Off**, or use a non-reasoning `NAN_MODEL` (e.g. `qwen3.8-flash`; `glm5.3-flash` thinks for 8 s+). |
+| Formatting feels slow | Set style **Off**, or use a non-reasoning model (`qwen3.8-flash` on Nan; on OpenRouter the client sends `reasoning: {enabled: false}` automatically). |
 | Meeting not detected | Supported: Zoom, Teams, FaceTime, Webex, Whereby, Google Meet tabs in Chrome/Edge/Brave. |
 | Whisper says "en" for Spanish text | Fixed by the `looksSpanish` heuristic; text quality is unaffected. |
+| Provider panel shows no models | Network hiccup — hit the refresh button; the current model stays usable regardless. |
 
 ## Roadmap
 

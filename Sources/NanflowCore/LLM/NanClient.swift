@@ -38,7 +38,7 @@ public final class NanClient: @unchecked Sendable {
         guard config.isConfigured else { return }
         var request = URLRequest(url: URL(string: "\(config.baseURL)/models")!)
         request.httpMethod = "HEAD"
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuth(to: &request)
         request.timeoutInterval = 10
         session.dataTask(with: request).resume()
     }
@@ -63,7 +63,7 @@ public final class NanClient: @unchecked Sendable {
         let boundary = "nanflow-\(UUID().uuidString)"
         var request = URLRequest(url: URL(string: "\(config.baseURL)/audio/transcriptions")!)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuth(to: &request)
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
 
         var body = Data()
@@ -125,7 +125,7 @@ public final class NanClient: @unchecked Sendable {
 
         var request = URLRequest(url: URL(string: "\(config.baseURL)/chat/completions")!)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        applyAuth(to: &request)
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         var payload: [String: Any] = [
@@ -136,8 +136,13 @@ public final class NanClient: @unchecked Sendable {
             ],
             "max_tokens": maxTokens,
             "temperature": temperature,
-            "chat_template_kwargs": ["enable_thinking": false],
         ]
+        switch config.provider {
+        case .nan:
+            payload["chat_template_kwargs"] = ["enable_thinking": false]
+        case .openrouter:
+            payload["reasoning"] = ["exclude": true, "enabled": false]
+        }
         if jsonMode { payload["response_format"] = ["type": "json_object"] }
 
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
@@ -154,9 +159,82 @@ public final class NanClient: @unchecked Sendable {
         else { throw NanError.invalidResponse }
 
         let content = (message["content"] as? String) ?? ""
-        if content.isEmpty, let reasoning = message["reasoning_content"] as? String, !reasoning.isEmpty {
-            throw NanError.http(status: 590, body: "El modelo solo devolvió razonamiento (usa un modelo no-reasoning como \(config.model))")
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            let reasoning = (message["reasoning_content"] as? String) ?? (message["reasoning"] as? String) ?? ""
+            if !reasoning.isEmpty {
+                throw NanError.http(status: 590, body: "El modelo solo devolvió razonamiento (usa un modelo no-reasoning como \(config.model))")
+            }
         }
         return content
+    }
+
+    // MARK: - Provider plumbing
+
+    private func applyAuth(to request: inout URLRequest) {
+        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        if config.provider == .openrouter {
+            request.setValue("Nanflow", forHTTPHeaderField: "X-Title")
+        }
+    }
+
+    // MARK: - Model catalog
+
+    public struct ModelCatalog: Sendable {
+        public var llmModels: [String]
+        public var sttModels: [String]
+    }
+
+    /// Fetches the model list for the configured provider.
+    /// Nan: single STT model ("whisper"), chat models from /models.
+    /// OpenRouter: whisper family for STT (not listed in /models), chat models from the public catalog.
+    public func listModels() async throws -> ModelCatalog {
+        guard config.isConfigured else { throw NanError.notConfigured }
+
+        var request = URLRequest(url: URL(string: "\(config.baseURL)/models")!)
+        request.httpMethod = "GET"
+        applyAuth(to: &request)
+        request.timeoutInterval = 15
+
+        var llm: [String] = []
+        do {
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw NanError.invalidResponse
+            }
+            guard let obj = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let items = obj["data"] as? [[String: Any]]
+            else { throw NanError.invalidResponse }
+
+            for item in items {
+                guard let id = item["id"] as? String else { continue }
+                switch config.provider {
+                case .nan:
+                    let lower = id.lowercased()
+                    let excluded = ["whisper", "kokoro", "embedding", "rerank", "flux", "image", "tts"].contains { lower.contains($0) }
+                    if !excluded { llm.append(id) }
+                case .openrouter:
+                    if id.contains(":batch") || id.contains(":free") { continue }
+                    let arch = item["architecture"] as? [String: Any]
+                    let modalities = (arch?["input_modalities"] as? [String]) ?? []
+                    if modalities.contains("audio") { continue } // audio-input chat ≠ LLM de texto
+                    llm.append(id)
+                }
+            }
+            llm.sort()
+        } catch {
+            // sin catálogo seguimos con los defaults
+        }
+
+        let stt: [String]
+        switch config.provider {
+        case .nan:
+            stt = [config.whisperModel]
+        case .openrouter:
+            stt = Provider.openRouterSTTModels
+        }
+
+        if !llm.contains(config.model) { llm.insert(config.model, at: 0) }
+        return ModelCatalog(llmModels: llm, sttModels: stt)
     }
 }

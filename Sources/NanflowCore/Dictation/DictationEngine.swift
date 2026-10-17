@@ -19,7 +19,6 @@ public final class DictationEngine: @unchecked Sendable {
     public var trimSilenceEnabled = true
 
     private let mic = MicRecorder()
-    private let client = NanClient()
     private let history: HistoryStore
     private var state: State = .idle
     private let lock = NSLock()
@@ -90,7 +89,7 @@ public final class DictationEngine: @unchecked Sendable {
             NFLog.write("dict: trimmed \(recording.samples.count) -> \(trimmed.count) samples")
             do {
                 let t0 = Date()
-                let transcript = try await NanClient().transcribe(samples: trimmed, sampleRate: recording.sampleRate)
+                let transcript = try await ProviderSettings.shared.client().transcribe(samples: trimmed, sampleRate: recording.sampleRate)
                 let t1 = Date()
 
                 let formattedText: String
@@ -114,7 +113,8 @@ public final class DictationEngine: @unchecked Sendable {
                     finalText: formattedText
                 )
                 self.history.add(entry)
-                NFLog.write("dict: entry saved raw=\(transcript.text.prefix(60)) final=\(formattedText.prefix(60))")
+                let cfg = ProviderSettings.shared.effectiveConfig()
+                NFLog.write("dict: entry saved [\(cfg.provider.label)/\(cfg.whisperModel)+\(cfg.model)] raw=\(transcript.text.prefix(60)) final=\(formattedText.prefix(60))")
 
                 if !formattedText.isEmpty {
                     try await MainActor.run {

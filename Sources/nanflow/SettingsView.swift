@@ -8,6 +8,7 @@ struct SettingsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
                 header
+                providerSection
                 dictationSection
                 styleSection
                 meetingsSection
@@ -17,7 +18,7 @@ struct SettingsView: View {
             }
             .padding(20)
         }
-        .frame(width: 620, height: 760)
+        .frame(width: 620, height: 860)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { store.refreshHistory() }
     }
@@ -35,6 +36,109 @@ struct SettingsView: View {
             Spacer()
         }
         .padding(.bottom, 4)
+    }
+
+    // MARK: - Provider
+
+    private var providerSection: some View {
+        section("Provider & API keys") {
+            Picker("Provider", selection: $store.provider) {
+                ForEach(Provider.allCases, id: \.self) { p in
+                    Text(p.label).tag(p)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            keyRow
+
+            Picker("Speech-to-text model", selection: $store.selectedSTTModel) {
+                ForEach(store.sttModels.isEmpty ? [store.selectedSTTModel] : store.sttModels, id: \.self) { m in
+                    Text(m).tag(m)
+                }
+            }
+            .pickerStyle(.menu)
+            .disabled(!store.sttSelectable)
+            if !store.sttSelectable {
+                Text("Nan provides a single Whisper endpoint — fixed for this provider.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+
+            HStack {
+                Picker("LLM model", selection: $store.selectedLLMModel) {
+                    ForEach(store.llmModels.isEmpty ? [store.selectedLLMModel] : store.llmModels, id: \.self) { m in
+                        Text(m).tag(m)
+                    }
+                }
+                .pickerStyle(.menu)
+
+                Button {
+                    store.fetchModels()
+                } label: {
+                    if store.modelsLoading {
+                        ProgressView().controlSize(.small)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                }
+                .controlSize(.small)
+                .help("Refresh model list")
+            }
+
+            if let err = store.modelsError {
+                Label(err, systemImage: "exclamationmark.triangle")
+                    .font(.caption).foregroundStyle(.orange)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var keyRow: some View {
+        if let masked = store.maskedCurrentKey, !store.showKeyEditor {
+            HStack {
+                Image(systemName: "key.fill").foregroundStyle(.green).font(.caption)
+                Text(masked)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                Text("from \(store.keySourceLabel ?? "")")
+                    .font(.caption2)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.green.opacity(0.12))
+                    .clipShape(Capsule())
+                    .foregroundStyle(.green)
+                Spacer()
+                Button("Replace") { store.showKeyEditor = true }
+                    .controlSize(.small)
+                if store.keySourceLabel == "Keychain" {
+                    Button("Remove") { store.clearKey(); store.showKeyEditor = false }
+                        .controlSize(.small)
+                }
+            }
+        } else {
+            keyEditor
+        }
+    }
+
+    private var keyEditor: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                SecureField("Paste your \(store.provider.label) API key", text: $store.keyDraft)
+                    .textFieldStyle(.roundedBorder)
+                Button("Save") {
+                    store.saveKey()
+                    store.showKeyEditor = false
+                }
+                .disabled(store.keyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
+                if store.showKeyEditor {
+                    Button("Cancel") {
+                        store.keyDraft = ""
+                        store.showKeyEditor = false
+                    }
+                }
+            }
+            Text("Stored in the macOS Keychain — never written to disk in plain text.")
+                .font(.caption2).foregroundStyle(.secondary)
+        }
     }
 
     private var dictationSection: some View {

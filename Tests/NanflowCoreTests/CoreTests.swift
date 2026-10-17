@@ -214,3 +214,52 @@ final class TrimSilenceTests: XCTestCase {
         XCTAssertEqual(trimmed, silence)
     }
 }
+
+final class KeychainMaskTests: XCTestCase {
+    func testMaskedLongKey() {
+        let masked = KeychainStore.masked("sk-or-v1-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1234")
+        XCTAssertTrue(masked.hasPrefix("sk-or-v"))
+        XCTAssertTrue(masked.hasSuffix("1234"))
+        XCTAssertTrue(masked.contains("…"))
+        XCTAssertLessThan(masked.count, 20)
+    }
+
+    func testMaskedShortKey() {
+        XCTAssertEqual(KeychainStore.masked("abc"), "•••")
+    }
+}
+
+final class ProviderSettingsTests: XCTestCase {
+    func testProviderDefaults() {
+        XCTAssertEqual(Provider.nan.defaultSTTModel, "whisper")
+        XCTAssertFalse(Provider.nan.sttModelSelectable)
+        XCTAssertEqual(Provider.openrouter.defaultSTTModel, "openai/whisper-large-v3-turbo")
+        XCTAssertTrue(Provider.openrouter.sttModelSelectable)
+        XCTAssertEqual(Provider.openRouterSTTModels.count, 3)
+        XCTAssertTrue(Provider.openRouterSTTModels.allSatisfy { $0.hasPrefix("openai/whisper") })
+    }
+
+    func testEnvKeysResolveBothProviders() {
+        XCTAssertNotNil(ProviderSettings.shared.envKey(for: .nan))
+        XCTAssertNotNil(ProviderSettings.shared.envKey(for: .openrouter))
+        XCTAssertTrue(ProviderSettings.shared.hasKey(for: .nan))
+        XCTAssertTrue(ProviderSettings.shared.hasKey(for: .openrouter))
+    }
+
+    func testModelsFromEnv() {
+        XCTAssertEqual(ProviderSettings.shared.sttModel(for: .nan), "whisper")
+        XCTAssertEqual(ProviderSettings.shared.sttModel(for: .openrouter), "openai/whisper-large-v3-turbo")
+        XCTAssertEqual(ProviderSettings.shared.llmModel(for: .openrouter), "deepseek/deepseek-v4.1-flash")
+    }
+
+    func testEffectiveConfigPerProvider() {
+        let nan = ProviderSettings.shared.effectiveConfig(for: .nan)
+        XCTAssertEqual(nan.provider, .nan)
+        XCTAssertTrue(nan.baseURL.contains("nan.builders"))
+
+        let or = ProviderSettings.shared.effectiveConfig(for: .openrouter)
+        XCTAssertEqual(or.provider, .openrouter)
+        XCTAssertTrue(or.baseURL.contains("openrouter.ai"))
+        XCTAssertTrue(or.isConfigured)
+    }
+}

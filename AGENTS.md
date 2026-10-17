@@ -21,7 +21,9 @@ open build/Nanflow.app                 # lanzar la app (menú bar)
 ## Arquitectura
 
 - **NanflowCore** (librería, testable sin GUI):
-  - `Config/AppConfig.swift` — `.env` (NAN_API_KEY, NAN_BASE_URL, NAN_MODEL, NAN_WHISPER_MODEL). Búsqueda: env vars → ~/.nanflow/.env → ~/Library/Application Support/Nanflow/.env → CWD/.env → bundle Resources/.env
+  - `Config/AppConfig.swift` — `Provider` (nan/openrouter) + `.env` (NAN_*, OPENROUTER_*, LLM_OPENROUTER_MODEL, STT_OPENROUTER_MODEL). Búsqueda: env vars → ~/.nanflow/.env → ~/Library/Application Support/Nanflow/.env → CWD/.env → bundle Resources/.env
+  - `Config/ProviderSettings.swift` — **resolución de proveedor activo**: key (Keychain > .env), modelos por proveedor (UserDefaults > env > default), `client()` para los motores
+  - `Config/KeychainStore.swift` — SecItem genérico para API keys metidas por UI (nunca en texto plano) + `masked()` para UI
   - `Config/NFLog.swift` — log en `~/Library/Application Support/Nanflow/nanflow.log`
   - `LLM/NanClient.swift` — whisper (`/v1/audio/transcriptions`, multipart, **también in-memory con `transcribe(samples:)`**) + chat (`/v1/chat/completions`, con `chat_template_kwargs: {enable_thinking: false}` para latencia <2s) + `prewarm()` (calienta DNS+TLS al lanzar)
   - `LLM/Formatter.swift` — **TextStyle** (off/natural/informal/formal) con prompts por estilo; `.off` no debe llamar al LLM (lo salta el motor)
@@ -52,6 +54,7 @@ open build/Nanflow.app                 # lanzar la app (menú bar)
 5. **NSLock no es reentrante**: no llamar `setState()` (que lockea) desde una sección que ya lockea.
 6. **whisper de Nan**: el campo `language` de la respuesta miente (dice "en" para español); hay heurística `looksSpanish` en NanClient.
 7. **qwen3.8-flash** (default NAN_MODEL) formatea bien y rápido; `glm5.3-flash` es reasoning y tarda 8s+.
+8. **OpenRouter**: los modelos whisper NO aparecen en `/models` pero `/audio/transcriptions` funciona igual (multipart OpenAI). Los LLM del catálogo con `input_modalities` audio se excluyen (no sirven para chat de texto). Para desactivar thinking: `"reasoning": {"exclude": true, "enabled": false}` (el `chat_template_kwargs` de Nan NO funciona ahí).
 
 ## Testing E2E sin manos
 

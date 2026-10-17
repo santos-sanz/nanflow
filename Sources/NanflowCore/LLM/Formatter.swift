@@ -97,7 +97,7 @@ public enum Formatter {
 
     /// Formats raw transcript with the given style. Style .off should not call this (engine skips LLM).
     public static func formatDictation(_ raw: String, style: TextStyle = .natural) async throws -> String {
-        let client = NanClient()
+        let client = ProviderSettings.shared.client()
         let formatted = try await client.chat(
             system: systemPrompt(for: style),
             user: raw,
@@ -112,7 +112,7 @@ public enum Formatter {
     }
 
     public static func summarizeMeeting(_ transcript: String) async throws -> String {
-        let client = NanClient()
+        let client = ProviderSettings.shared.client()
         return try await client.chat(
             system: meetingSummarySystemPrompt,
             user: transcript,

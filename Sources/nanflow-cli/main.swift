@@ -24,15 +24,26 @@ func config() -> AppConfig {
     return cfg
 }
 
+func providerOverride() -> Provider? {
+    if args.contains("--provider"), let p = flag("--provider") {
+        return Provider(rawValue: p)
+    }
+    return nil
+}
+
 // MARK: - Commands
 
 func cmdTranscribe() async {
-    guard args.count >= 2 else { fail("usage: nanflow-cli transcribe <audio> [--lang es|en]") }
+    guard args.count >= 2 else { fail("usage: nanflow-cli transcribe <audio> [--lang es|en] [--provider nan|openrouter]") }
     let url = URL(fileURLWithPath: args[1])
     guard FileManager.default.fileExists(atPath: url.path) else { fail("file not found: \(args[1])") }
-    let client = NanClient(config: config())
+    let p = providerOverride()
+    let cfg = ProviderSettings.shared.effectiveConfig(for: p)
+    guard cfg.isConfigured else { fail("sin API key para \(cfg.provider.label)") }
+    let client = NanClient(config: cfg)
     do {
         let out = try await client.transcribe(audioURL: url, language: flag("--lang"))
+        print("provider: \(cfg.provider.label) · stt=\(cfg.whisperModel)")
         print("lang:     \(out.language ?? "?")")
         print("duration: \(String(format: "%.2f", out.audioDuration))s in \(String(format: "%.2f", out.processingTime))s")
         print("raw:      \(out.text)")
@@ -40,21 +51,36 @@ func cmdTranscribe() async {
 }
 
 func cmdPipeline() async {
-    guard args.count >= 2 else { fail("usage: nanflow-cli pipeline <audio> [--no-format]") }
+    guard args.count >= 2 else { fail("usage: nanflow-cli pipeline <audio> [--no-format] [--provider nan|openrouter]") }
     let url = URL(fileURLWithPath: args[1])
     guard FileManager.default.fileExists(atPath: url.path) else { fail("file not found: \(args[1])") }
     let noFormat = args.contains("--no-format")
-    let client = NanClient(config: config())
+    let p = providerOverride()
+    let cfg = ProviderSettings.shared.effectiveConfig(for: p)
+    guard cfg.isConfigured else { fail("sin API key para \(cfg.provider.label)") }
+    let client = NanClient(config: cfg)
     do {
         let t0 = Date()
         let out = try await client.transcribe(audioURL: url)
         let t1 = Date()
+        print("provider: \(cfg.provider.label) · stt=\(cfg.whisperModel) · llm=\(cfg.model)")
         print("raw:      \(out.text)")
         guard !noFormat, !out.text.isEmpty else { return }
-        let formatted = try await Formatter.formatDictation(out.text)
+        let formatted = try await client.chat(system: Formatter.systemPrompt(for: .natural), user: out.text, maxTokens: 2048, temperature: 0.1)
         let t2 = Date()
-        print("final:    \(formatted)")
-        print("timing:   whisper \(Int(t1.timeIntervalSince(t0) * 1000))ms · llm \(Int(t2.timeIntervalSince(t1) * 1000))ms · total \(Int(t2.timeIntervalSince(t0) * 1000))ms")
+        print("final:    \(formatted.trimmingCharacters(in: .whitespacesAndNewlines))")
+        print("timing:   stt \(Int(t1.timeIntervalSince(t0) * 1000))ms · llm \(Int(t2.timeIntervalSince(t1) * 1000))ms · total \(Int(t2.timeIntervalSince(t0) * 1000))ms")
+    } catch { fail("\(error)") }
+}
+
+func cmdModels() async {
+    let p = providerOverride()
+    let cfg = ProviderSettings.shared.effectiveConfig(for: p)
+    guard cfg.isConfigured else { fail("sin API key para \(cfg.provider.label)") }
+    do {
+        let catalog = try await NanClient(config: cfg).listModels()
+        print("provider \(cfg.provider.label): \(catalog.llmModels.count) LLMs · STT: \(catalog.sttModels.joined(separator: ", "))")
+        print("primeros LLMs: \(catalog.llmModels.prefix(8).joined(separator: ", "))")
     } catch { fail("\(error)") }
 }
 
@@ -150,6 +176,7 @@ func cmdEnv() {
 switch command {
 case "transcribe": await cmdTranscribe()
 case "pipeline": await cmdPipeline()
+case "models": await cmdModels()
 case "test-llm": await cmdTestLLM()
 case "record-test": await cmdRecordTest()
 case "meeting-test": await cmdMeetingTest()

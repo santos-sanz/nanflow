@@ -155,7 +155,7 @@ public final class MeetingEngine: @unchecked Sendable {
 
     private func processTranscription(entry: HistoryEntry, wavURL: URL) async {
         do {
-            let client = NanClient()
+            let client = ProviderSettings.shared.client()
             let transcript = try await client.transcribe(audioURL: wavURL)
             NFLog.write("meeting: transcript \(transcript.text.prefix(80))")
             var updated = entry

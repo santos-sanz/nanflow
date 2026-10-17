@@ -7,6 +7,7 @@ Clon de Wispr Flow para macOS con **transcripción vía API de Nan** (whisper cl
 ```bash
 swift build -c release                 # compilar todo
 swift test                             # unit tests (51 tests)
+./scripts/build-icon.sh                # regenera scripts/AppIcon.icns + docs/logo.*
 ./scripts/build-app.sh release         # genera build/Nanflow.app (firmado con "Nanflow Dev")
 open build/Nanflow.app                 # lanzar la app (menú bar)
 .build/release/nanflow-cli env         # config Nan cargada

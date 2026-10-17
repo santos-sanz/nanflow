@@ -102,6 +102,50 @@ public enum Formatter {
         return base
     }
 
+    /// Short natural dictations only need deterministic cleanup; skipping the LLM saves ~1 s.
+    public static func shouldSkipLLM(_ raw: String, style: TextStyle, dictionary: [String] = [], wordLimit: Int = 3) -> Bool {
+        guard style == .natural, dictionary.isEmpty else { return false }
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !VoiceCommands.containsCommands(trimmed) else { return false }
+        let words = trimmed.split(whereSeparator: { $0.isWhitespace }).count
+        return words > 0 && words <= wordLimit
+    }
+
+    /// Deterministic fallback used for short text, style .off and when the LLM fails.
+    public static func polishWithoutLLM(_ raw: String) -> String {
+        var text = VoiceCommands.apply(raw).trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return "" }
+        text = text.replacingOccurrences(of: "[ \t]+", with: " ", options: .regularExpression)
+        if let first = text.first, first.isLetter, first.isLowercase {
+            text = first.uppercased() + text.dropFirst()
+        }
+        if let last = text.last, last.isLetter || last.isNumber {
+            text += "."
+        }
+        return text
+    }
+
+    /// Formats with graceful fallback: a failed/slow LLM never loses the dictation.
+    public static func formatForDictation(
+        _ raw: String,
+        style: TextStyle,
+        dictionary: [String],
+        fastShort: Bool,
+        using format: (String, TextStyle, [String]) async throws -> String
+    ) async -> (text: String, usedFallback: Bool) {
+        if style == .off {
+            return (VoiceCommands.apply(raw), false)
+        }
+        if fastShort && shouldSkipLLM(raw, style: style, dictionary: dictionary) {
+            return (polishWithoutLLM(raw), false)
+        }
+        do {
+            return (VoiceCommands.apply(try await format(raw, style, dictionary)), false)
+        } catch {
+            return (polishWithoutLLM(raw), true)
+        }
+    }
+
     /// Formats raw transcript with the given style. Style .off should not call this (engine skips LLM).
     public static func formatDictation(_ raw: String, style: TextStyle = .natural, dictionary: [String] = []) async throws -> String {
         let client = ProviderSettings.shared.client()

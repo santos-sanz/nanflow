@@ -25,17 +25,34 @@ public final class NanClient: @unchecked Sendable {
     private let config: AppConfig
     private let session: URLSession
 
-    public init(config: AppConfig = .load()) {
-        self.config = config
+    private static let sessionLock = NSLock()
+    private static var lastPrewarm: [String: Date] = [:]
+    private static let sharedSession: URLSession = {
         let cfg = URLSessionConfiguration.default
         cfg.timeoutIntervalForRequest = 120
         cfg.timeoutIntervalForResource = 300
-        self.session = URLSession(configuration: cfg)
+        cfg.httpMaximumConnectionsPerHost = 6
+        cfg.requestCachePolicy = .reloadIgnoringLocalCacheData
+        return URLSession(configuration: cfg)
+    }()
+
+    public init(config: AppConfig = .load()) {
+        self.config = config
+        self.session = Self.sharedSession
     }
 
-    /// Warms up DNS + TLS + HTTP/2 to the Nan API so the first real request skips the handshake.
-    public func prewarm() {
+    /// Warms up DNS + TLS + HTTP/2. The session is shared, so the connection is reused by the real request.
+    public func prewarm(force: Bool = false) {
         guard config.isConfigured else { return }
+        let key = "\(config.provider.rawValue)|\(config.baseURL)"
+        Self.sessionLock.lock()
+        if !force, let last = Self.lastPrewarm[key], Date().timeIntervalSince(last) < 25 {
+            Self.sessionLock.unlock()
+            return
+        }
+        Self.lastPrewarm[key] = Date()
+        Self.sessionLock.unlock()
+
         var request = URLRequest(url: URL(string: "\(config.baseURL)/models")!)
         request.httpMethod = "HEAD"
         applyAuth(to: &request)
@@ -179,6 +196,7 @@ public final class NanClient: @unchecked Sendable {
 
     private func applyAuth(to request: inout URLRequest) {
         request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Nanflow/0.1 (macOS)", forHTTPHeaderField: "User-Agent")
         if config.provider == .openrouter {
             request.setValue("Nanflow", forHTTPHeaderField: "X-Title")
         }

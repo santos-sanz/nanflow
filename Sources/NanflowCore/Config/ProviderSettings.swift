@@ -8,6 +8,7 @@ public final class ProviderSettings: @unchecked Sendable {
     private let defaults = UserDefaults.standard
     private let lock = NSLock()
     private var cachedEnv: [String: String]
+    private var cachedClients: [Provider: (fingerprint: String, client: NanClient)] = [:]
 
     private enum Keys {
         static let provider = "nanflow.provider"
@@ -130,10 +131,26 @@ public final class ProviderSettings: @unchecked Sendable {
     }
 
     public func client(for p: Provider? = nil) -> NanClient {
-        NanClient(config: effectiveConfig(for: p))
+        let provider = p ?? self.provider
+        let config = effectiveConfig(for: provider)
+        let fingerprint = "\(provider.rawValue)|\(config.baseURL)|\(config.apiKey.hashValue)|\(config.model)|\(config.whisperModel)"
+        lock.lock()
+        if let cached = cachedClients[provider], cached.fingerprint == fingerprint {
+            lock.unlock()
+            return cached.client
+        }
+        let client = NanClient(config: config)
+        cachedClients[provider] = (fingerprint, client)
+        lock.unlock()
+        return client
+    }
+
+    /// Reuses the same client (and URLSession connection) when the config has not changed.
+    public func prewarmIfNeeded() {
+        client().prewarm()
     }
 
     public func prewarm() {
-        client().prewarm()
+        client().prewarm(force: true)
     }
 }

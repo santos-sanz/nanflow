@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%2014.2%2B-black?logo=apple&logoColor=white" alt="macOS 14.2+">
   <img src="https://img.shields.io/badge/Swift-6-orange?logo=swift&logoColor=white" alt="Swift 6">
-  <img src="https://img.shields.io/badge/tests-28%2F28-brightgreen" alt="tests 28/28">
+  <img src="https://img.shields.io/badge/tests-51%2F51-brightgreen" alt="tests 51/51">
   <img src="https://img.shields.io/badge/dependencies-0-blueviolet" alt="zero dependencies">
 </p>
 
@@ -25,13 +25,14 @@ Everything is orchestrated from a small menu-bar app with a native SwiftUI contr
 
 | | |
 |---|---|
-| 🎙️ **Hold-to-talk dictation** | Hold ⌘ right (or ⌥ right / Fn / F5), speak, release. A floating bubble shows the mic level while you talk. |
+| 🎙️ **Hold-to-talk dictation** | Hold ⌘ right (or ⌥ right / Fn / F5), speak, release. A floating bubble shows the mic level while you talk. **Esc cancels** while recording or processing. |
 | 🌍 **Spanish & English** | Language is detected per utterance; the formatter always answers in the language you spoke. |
-| ✨ **Text styles** | **Off** (raw transcript, no LLM), **Natural**, **Informal**, **Formal** — switchable from the menu bar or the panel. |
-| 🔵 **Automatic meetings** | Detects meetings by app or browser tab, records system audio + mic, then transcribes and summarizes: Resumen / Decisiones / Acciones. Editable summary + transcript in a detail window, export to **Markdown (clipboard)** or **PDF**. |
+| ✨ **Text styles** | **Off** (raw transcript, no LLM), **Natural**, **Informal**, **Formal** — switchable from the menu bar or the panel. Short Natural phrases skip the LLM (~33 % faster). |
+| 🛟 **Never loses a dictation** | If the LLM fails or is unreachable, the raw transcript is polished locally and pasted anyway. Silence is detected before upload (0 ms API time). |
+| 🔵 **Meetings** | Detects meetings by app or browser tab, or start one manually from the menu. Records system audio + mic, then transcribes and summarizes: Resumen / Decisiones / Acciones. Editable summary + transcript in a detail window, export to **Markdown (clipboard)** or **PDF**. |
 | 🗣️ **Voice commands** | Say "nueva línea" or "punto y aparte" to insert real line/paragraph breaks; "dos puntos" and "punto y coma" too. |
 | 📖 **Custom dictionary** | List names and terms once; the formatter spells them exactly as written. |
-| ⚡ **Low latency** | Silence trimming, in-memory WAV upload, TLS prewarm, latency-based provider routing. |
+| ⚡ **Low latency** | Silence trimming, in-memory WAV upload, shared URLSession + TLS prewarm on press, short-utterance fast path, latency-based provider routing. |
 | 🔀 **Two providers** | Nan or OpenRouter, with live model catalogs and per-provider selection. |
 | 🔒 **Privacy-first** | Audio travels only to your chosen API. Transcripts, meeting recordings and history never leave your Mac. |
 
@@ -97,14 +98,16 @@ Panel choices override `.env` and persist per provider (LLM and STT separately).
 
 ## ⏱️ Latency
 
-Measured end-to-end on an M3 (release hotkey → text pasted, ~7 s clip):
+Measured on an M3 (release build, Nan provider, median of 3 runs, hotkey release → text pasted):
 
-| Mode | Total | Notes |
+| Case | Total | Notes |
 |---|---|---|
-| Style **Off** | ~3.5 s | Whisper only |
-| Style **Natural** | ~4.1 s | Whisper + LLM polish, connection prewarmed |
+| Natural, long clip (~11 s) | ~3.4–4.6 s | Whisper + LLM polish; network-bound |
+| Natural, short clip (≤3 words) | ~1.3 s | LLM skipped, deterministic punctuation |
+| Same short clip with LLM | ~2.0 s | Baseline before the fast path |
+| Silence (no speech) | ~0 ms | VAD rejects it before any upload |
 
-What makes it fast: leading/trailing silence trim (−13 % upload), PCM16 WAV built in memory (no temp files), DNS/TLS prewarm at launch, LLM skipped when style is Off, and OpenRouter requests routed with `provider.sort = latency`.
+What makes it fast: leading/trailing silence trim (−13 % upload), PCM16 WAV built in memory (no temp files), a shared `URLSession` with TLS prewarm at launch and on hotkey press, LLM skipped for style Off and short Natural phrases, and OpenRouter requests routed with `provider.sort = latency`. If the LLM fails, the transcript is still pasted (local fallback) instead of being lost.
 
 ## 🏗️ Architecture
 
@@ -137,7 +140,7 @@ What makes it fast: leading/trailing silence trim (−13 % upload), PCM16 WAV bu
 
 ```bash
 swift build -c release          # build everything
-swift test                      # 28 unit tests
+swift test                      # 51 unit tests
 ./scripts/build-app.sh release  # build/Nanflow.app, signed "Nanflow Dev"
 
 # CLI harness
@@ -146,6 +149,8 @@ swift test                      # 28 unit tests
 .build/release/nanflow-cli models --provider openrouter             # live model catalog
 .build/release/nanflow-cli transcribe /tmp/audio.wav                # whisper via active provider
 .build/release/nanflow-cli pipeline /tmp/audio.wav --provider openrouter  # transcribe + format, timed
+.build/release/nanflow-cli pipeline /tmp/audio.wav --no-fast             # force the LLM path for comparison
+.build/release/nanflow-cli pipeline /tmp/silence.wav --no-vad            # simulate the old silence upload
 .build/release/nanflow-cli record-test --secs 3                     # real mic → full pipeline
 .build/release/nanflow-cli tap-test                                 # system audio → whisper
 .build/release/nanflow-cli meeting-test --secs 8                    # meeting engine end-to-end
@@ -184,6 +189,7 @@ tail ~/Library/Application\ Support/Nanflow/nanflow.log
 - [x] Voice commands ("nueva línea", "punto y aparte", "dos puntos", "punto y coma")
 - [x] Meeting report export — Markdown via clipboard + PDF
 - [ ] Shareable transcript links
+- [x] VAD fast path for silent dictations (skip upload)
 - [ ] On-device VAD for automatic dictation stop
 
 ---

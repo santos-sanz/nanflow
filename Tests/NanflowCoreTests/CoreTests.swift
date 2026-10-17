@@ -334,3 +334,108 @@ final class DictionaryPromptTests: XCTestCase {
         XCTAssertFalse(p.contains("SPELLING DICTIONARY"))
     }
 }
+
+final class AppConfigBaseURLTests: XCTestCase {
+    func testTrailingSlashRemoved() {
+        let cfg = AppConfig(provider: .nan, apiKey: "x", baseURL: "https://api.nan.builders/v1/")
+        XCTAssertEqual(cfg.baseURL, "https://api.nan.builders/v1")
+    }
+
+    func testDefaultProviderURLsAreNormalized() {
+        XCTAssertFalse(AppConfig(provider: .nan).baseURL.hasSuffix("/"))
+        XCTAssertFalse(AppConfig(provider: .openrouter).baseURL.hasSuffix("/"))
+    }
+}
+
+final class ShortDictationTests: XCTestCase {
+    func testShortNaturalUtteranceSkipsLLM() {
+        XCTAssertTrue(Formatter.shouldSkipLLM("gracias", style: .natural, dictionary: []))
+        XCTAssertTrue(Formatter.shouldSkipLLM("sí, claro", style: .natural, dictionary: []))
+        XCTAssertFalse(Formatter.shouldSkipLLM("gracias equipo por todo el trabajo de hoy", style: .natural, dictionary: []))
+        XCTAssertFalse(Formatter.shouldSkipLLM("gracias", style: .formal, dictionary: []))
+        XCTAssertFalse(Formatter.shouldSkipLLM("gracias", style: .natural, dictionary: ["Nanflow"]))
+        XCTAssertFalse(Formatter.shouldSkipLLM("nueva línea", style: .natural, dictionary: []))
+    }
+
+    func testPolishWithoutLLM() {
+        XCTAssertEqual(Formatter.polishWithoutLLM("hola"), "Hola.")
+        XCTAssertEqual(Formatter.polishWithoutLLM("  gracias  "), "Gracias.")
+        XCTAssertEqual(Formatter.polishWithoutLLM("¿qué tal?"), "¿qué tal?")
+        XCTAssertEqual(Formatter.polishWithoutLLM("hola nueva línea mundo"), "Hola\nmundo.")
+        XCTAssertEqual(Formatter.polishWithoutLLM(""), "")
+    }
+
+    func testFormatForDictationFallsBackOnError() async {
+        let result = await Formatter.formatForDictation("hola mundo", style: .natural, dictionary: [], fastShort: false) { _, _, _ in
+            throw NanError.invalidResponse
+        }
+        XCTAssertTrue(result.usedFallback)
+        XCTAssertEqual(result.text, "Hola mundo.")
+    }
+
+    func testFormatForDictationShortPathDoesNotCallLLM() async {
+        final class Box { var called = false }
+        let box = Box()
+        let result = await Formatter.formatForDictation("gracias", style: .natural, dictionary: [], fastShort: true) { _, _, _ in
+            box.called = true
+            return "no debería usarse"
+        }
+        XCTAssertFalse(box.called)
+        XCTAssertEqual(result.text, "Gracias.")
+    }
+
+    func testOffStyleKeepsRawTextAndCommands() async {
+        let result = await Formatter.formatForDictation("hola nueva línea mundo", style: .off, dictionary: [], fastShort: true) { _, _, _ in
+            XCTFail("style .off should never call the LLM")
+            return ""
+        }
+        XCTAssertFalse(result.usedFallback)
+        XCTAssertEqual(result.text, "hola\nmundo")
+    }
+}
+
+final class VoiceActivityTests: XCTestCase {
+    func testDetectsVoice() {
+        let speech = (0..<16_000).map { _ in Float.random(in: -0.4...0.4) }
+        XCTAssertTrue(AudioMixer.hasSpeech(samples: speech, sampleRate: 16_000))
+    }
+
+    func testRejectsSilence() {
+        XCTAssertFalse(AudioMixer.hasSpeech(samples: [Float](repeating: 0, count: 16_000), sampleRate: 16_000))
+        XCTAssertFalse(AudioMixer.hasSpeech(samples: [], sampleRate: 16_000))
+    }
+
+    func testRejectsSingleClick() {
+        var samples = [Float](repeating: 0, count: 16_000)
+        samples[8_000] = 0.9
+        XCTAssertFalse(AudioMixer.hasSpeech(samples: samples, sampleRate: 16_000))
+    }
+
+    func testDownmixAveragesChannels() {
+        XCTAssertEqual(AudioMixer.downmix(channels: [[1, 1], [3, 3]]), [2, 2])
+        XCTAssertEqual(AudioMixer.downmix(channels: [[1, 2]]), [1, 2])
+        XCTAssertTrue(AudioMixer.downmix(channels: []).isEmpty)
+    }
+}
+
+final class ClientCacheTests: XCTestCase {
+    func testClientIsReusedForUnchangedConfig() {
+        let a = ProviderSettings.shared.client(for: .nan)
+        let b = ProviderSettings.shared.client(for: .nan)
+        XCTAssertTrue(a === b)
+    }
+
+    func testClientChangesWhenModelChanges() {
+        let p = Provider.openrouter
+        let old = ProviderSettings.shared.llmModel(for: p)
+        defer {
+            ProviderSettings.shared.setLLMModel(old, for: p)
+            _ = ProviderSettings.shared.client(for: p)
+        }
+        ProviderSettings.shared.setLLMModel("test/model-one", for: p)
+        let a = ProviderSettings.shared.client(for: p)
+        ProviderSettings.shared.setLLMModel("test/model-two", for: p)
+        let b = ProviderSettings.shared.client(for: p)
+        XCTAssertFalse(a === b)
+    }
+}

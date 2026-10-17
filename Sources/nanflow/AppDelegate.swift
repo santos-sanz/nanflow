@@ -12,6 +12,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let detector = MeetingDetector()
     private let hotkey = HotKeyMonitor()
     private var meetingRecordingActive = false
+    private var lastNotice: String?
     private let settings = SettingsStore.shared
     private let settingsWindow = SettingsWindowController()
 
@@ -32,21 +33,46 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             self?.dictationStateChanged(state)
         }
         dictation.onResult = { [weak self] entry in
-            self?.refreshMenu()
+            DispatchQueue.main.async {
+                self?.settings.refreshHistory()
+                self?.refreshMenu()
+            }
         }
         dictation.onError = { [weak self] message in
-            self?.notify(title: "Nanflow", body: message, error: true)
+            DispatchQueue.main.async {
+                self?.notify(title: "Nanflow", body: message, error: true)
+            }
+        }
+        dictation.onNotice = { [weak self] message in
+            NFLog.write("dict notice: \(message)")
+            DispatchQueue.main.async {
+                self?.lastNotice = message
+                self?.refreshMenu()
+            }
         }
 
         meetings.onStateChange = { [weak self] state in
             self?.meetingStateChanged(state)
         }
         meetings.onError = { [weak self] message in
-            self?.notify(title: "Nanflow · Reunión", body: message, error: true)
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.notify(title: "Nanflow · Reunión", body: message, error: true)
+                if self.meetings.currentState == .idle { self.meetingRecordingActive = false }
+                self.refreshMenu()
+            }
         }
         meetings.onResult = { [weak self] entry in
-            self?.notify(title: "Reunión transcrita", body: "Se guardó en el historial. Resumen en camino…")
-            self?.refreshMenu()
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.settings.refreshHistory()
+                if entry.rawText.isEmpty && entry.summary == nil {
+                    self.refreshMenu()
+                    return
+                }
+                self.notify(title: "Reunión lista", body: "Transcripción y resumen guardados en el historial.")
+                self.refreshMenu()
+            }
         }
 
         detector.onMeetingStarted = { [weak self] detected in
@@ -90,9 +116,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let menu = statusItem.menu else { return }
         menu.removeAllItems()
 
-        let config = AppConfig.load()
-        if !config.isConfigured {
-            let warn = NSMenuItem(title: "⚠️ Falta NAN_API_KEY en .env", action: #selector(openEnvFolder), keyEquivalent: "")
+        let provider = ProviderSettings.shared.provider
+        if !ProviderSettings.shared.isConfigured() {
+            let warn = NSMenuItem(title: "⚠️ Falta la API key de \(provider.label) — Configurar…", action: #selector(openSettings), keyEquivalent: "")
             warn.target = self
             menu.addItem(warn)
             menu.addItem(.separator())
@@ -110,7 +136,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let modelItem = NSMenuItem(title: "Motor: \(ProviderSettings.shared.provider.label) · \(ProviderSettings.shared.llmModel(for: ProviderSettings.shared.provider))", action: nil, keyEquivalent: "")
         modelItem.isEnabled = false
         menu.addItem(modelItem)
+
+        let providerItem = NSMenuItem(title: "Proveedor", action: nil, keyEquivalent: "")
+        let providerMenu = NSMenu()
+        for p in Provider.allCases {
+            let item = NSMenuItem(title: p.label, action: #selector(changeProvider(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = p.rawValue
+            item.state = p == settings.provider ? .on : .off
+            providerMenu.addItem(item)
+        }
+        providerItem.submenu = providerMenu
+        menu.addItem(providerItem)
+        if let last = settings.history.all().first(where: { $0.kind == .dictation }) {
+            let total = last.transcriptionMs + last.formattingMs
+            let stats = NSMenuItem(title: "Último dictado: \(total) ms · STT \(last.transcriptionMs) ms · IA \(last.formattingMs) ms", action: nil, keyEquivalent: "")
+            stats.isEnabled = false
+            menu.addItem(stats)
+        }
+        if let lastNotice {
+            let notice = NSMenuItem(title: "Aviso: \(lastNotice)", action: nil, keyEquivalent: "")
+            notice.isEnabled = false
+            menu.addItem(notice)
+        }
         menu.addItem(.separator())
+
+        if meetingRecordingActive {
+            let stop = NSMenuItem(title: "⏹ Detener reunión y resumir", action: #selector(stopMeetingRecording), keyEquivalent: "")
+            stop.target = self
+            menu.addItem(stop)
+        } else if meetings.currentState == .processing {
+            let processing = NSMenuItem(title: "⏳ Procesando reunión…", action: nil, keyEquivalent: "")
+            processing.isEnabled = false
+            menu.addItem(processing)
+        } else {
+            let start = NSMenuItem(title: "⏺ Grabar reunión ahora", action: #selector(startMeetingRecording), keyEquivalent: "")
+            start.target = self
+            start.isEnabled = dictation.currentState == .idle
+            menu.addItem(start)
+        }
 
         if let current = detector.current {
             let m = NSMenuItem(title: "🔵 Reunión detectada: \(current.appName)", action: nil, keyEquivalent: "")
@@ -167,7 +231,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         let historyTitle = NSMenuItem(title: "Historial", action: nil, keyEquivalent: "")
         let historyMenu = NSMenu()
-        let all = HistoryStore().all().prefix(8)
+        let all = settings.history.all().prefix(8)
         if all.isEmpty {
             let empty = NSMenuItem(title: "(vacío)", action: nil, keyEquivalent: "")
             empty.isEnabled = false
@@ -181,6 +245,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 item.representedObject = entry.id.uuidString
                 item.toolTip = text
                 historyMenu.addItem(item)
+            }
+            if settings.history.all().contains(where: { $0.kind == .dictation }) {
+                let copyLast = NSMenuItem(title: "Copiar último dictado", action: #selector(copyLastDictation), keyEquivalent: "")
+                copyLast.target = self
+                historyMenu.addItem(.separator())
+                historyMenu.addItem(copyLast)
             }
             let open = NSMenuItem(title: "Abrir historial (JSON)", action: #selector(openHistory), keyEquivalent: "")
             open.target = self
@@ -232,8 +302,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshMenu()
     }
 
+    @objc private func changeProvider(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let p = Provider(rawValue: raw) else { return }
+        settings.provider = p
+        refreshMenu()
+    }
+
     private static var launchAtLoginEnabled: Bool {
-        (try? SMAppService.mainApp.status) == .enabled
+        SMAppService.mainApp.status == .enabled
     }
 
     @objc private func toggleLaunchAtLogin() {
@@ -262,12 +338,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func copyHistoryEntry(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String,
-              let entry = HistoryStore().all().first(where: { $0.id.uuidString == id })
+              let entry = settings.history.all().first(where: { $0.id.uuidString == id })
         else { return }
         let text = entry.kind == .meeting ? (entry.summary ?? entry.rawText) : entry.finalText
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(text, forType: .string)
         notify(title: "Copiado", body: String(text.prefix(80)))
+    }
+
+    @objc private func copyLastDictation() {
+        guard let entry = settings.history.all().first(where: { $0.kind == .dictation }) else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(entry.finalText, forType: .string)
+        notify(title: "Copiado", body: String(entry.finalText.prefix(80)))
     }
 
     @objc private func openHistory() {
@@ -277,7 +360,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @MainActor
     @objc private func openMeetingDetail(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String,
-              let entry = HistoryStore().all().first(where: { $0.id.uuidString == id }) else { return }
+              let entry = settings.history.all().first(where: { $0.id.uuidString == id }) else { return }
         MeetingDetailWindowController.shared.show(entry: entry)
     }
 
@@ -297,20 +380,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refreshMenu()
     }
 
+    @objc private func startMeetingRecording() {
+        guard !meetingRecordingActive, meetings.currentState == .idle else { return }
+        let app = detector.current?.appName ?? "Reunión manual"
+        meetings.startRecording(app: app)
+        meetingRecordingActive = meetings.currentState != .idle
+        if meetingRecordingActive {
+            notify(title: "Grabando reunión", body: "Usa Detener reunión y resumir al terminar.")
+        } else {
+            notify(title: "No se pudo iniciar la reunión", body: "El motor está ocupado; inténtalo de nuevo.", error: true)
+        }
+        refreshMenu()
+    }
+
     // MARK: - Dictation flow
 
     private func startHotkey(with hk: HotKey) {
         hotkey.onPress = { [weak self] in
             guard let self else { return }
+            guard self.dictation.currentState == .idle else { return }
+            self.lastNotice = nil
+            Task.detached { ProviderSettings.shared.prewarmIfNeeded() }
             let p = NSEvent.mouseLocation
             self.bubble.showRecording(near: p)
             self.statusItem.button?.image = NSImage(systemSymbolName: "waveform", accessibilityDescription: "Grabando")
-            self.dictation.startDictation()
+            if !self.dictation.startDictation() {
+                self.bubble.hide()
+                self.statusItem.button?.image = NSImage(systemSymbolName: "mic", accessibilityDescription: "Nanflow")
+            }
         }
         hotkey.onRelease = { [weak self] in
-            guard let self else { return }
+            guard let self, self.dictation.currentState == .recording else { return }
             self.bubble.showProcessing()
             self.dictation.endDictation()
+        }
+        hotkey.onCancel = { [weak self] in
+            guard let self, self.dictation.isBusy else { return false }
+            self.dictation.cancelDictation()
+            return true
         }
         hotkey.start(hotKey: hk)
     }
@@ -332,10 +439,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func meetingDetected(_ detected: DetectedMeeting) {
         statusItem.button?.image = NSImage(systemSymbolName: "person.2.wave.2", accessibilityDescription: "Reunión")
-        if settings.meetingsAutoRecord {
-            meetingRecordingActive = true
+        if settings.meetingsAutoRecord, meetings.currentState == .idle {
             meetings.startRecording(app: detected.appName)
-            notify(title: "Reunión detectada", body: "Grabando \(detected.appName). Se detendrá al terminar.")
+            meetingRecordingActive = meetings.currentState != .idle
+            if meetingRecordingActive {
+                notify(title: "Reunión detectada", body: "Grabando \(detected.appName). Se detendrá al terminar.")
+            }
         } else {
             notify(title: "Reunión detectada", body: "\(detected.appName) — abre el menú para grabar.")
         }
@@ -354,11 +463,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func meetingStateChanged(_ state: MeetingEngine.MeetingState) {
         switch state {
-        case .recording(let app):
+        case .recording:
             statusItem.button?.image = NSImage(systemSymbolName: "record.circle", accessibilityDescription: "Grabando reunión")
         case .processing:
             statusItem.button?.image = NSImage(systemSymbolName: "hourglass", accessibilityDescription: "Procesando reunión")
         case .idle:
+            meetingRecordingActive = false
             statusItem.button?.image = NSImage(systemSymbolName: "mic", accessibilityDescription: "Nanflow")
         }
         refreshMenu()

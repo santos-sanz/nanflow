@@ -46,6 +46,8 @@ public struct HistoryEntry: Codable, Identifiable, Sendable {
 }
 
 public final class HistoryStore: @unchecked Sendable {
+    public static let shared = HistoryStore()
+
     private let fileURL: URL
     private let queue = DispatchQueue(label: "nanflow.history")
     private var entries: [HistoryEntry] = []

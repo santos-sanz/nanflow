@@ -6,12 +6,14 @@ Clon de Wispr Flow para macOS con **transcripción vía API de Nan** (whisper cl
 
 ```bash
 swift build -c release                 # compilar todo
-swift test                             # unit tests (22 tests)
+swift test                             # unit tests (51 tests)
 ./scripts/build-app.sh release         # genera build/Nanflow.app (firmado con "Nanflow Dev")
 open build/Nanflow.app                 # lanzar la app (menú bar)
 .build/release/nanflow-cli env         # config Nan cargada
 .build/release/nanflow-cli test-llm    # ping al LLM
 .build/release/nanflow-cli pipeline /tmp/nf-test-es.wav   # transcribe+formatea
+.build/release/nanflow-cli pipeline /tmp/x.wav --no-fast   # fuerza LLM (comparativa)
+.build/release/nanflow-cli pipeline /tmp/x.wav --no-vad    # simula subida de silencio
 .build/release/nanflow-cli record-test --secs 3           # micro real → pipeline
 .build/release/nanflow-cli tap-test                       # audio del sistema → whisper
 .build/release/nanflow-cli meeting-test --secs 8          # motor de reuniones
@@ -25,7 +27,7 @@ open build/Nanflow.app                 # lanzar la app (menú bar)
   - `Config/ProviderSettings.swift` — **resolución de proveedor activo**: key (Keychain > .env), modelos por proveedor (UserDefaults > env > default), `client()` para los motores
   - `Config/KeychainStore.swift` — SecItem genérico para API keys metidas por UI (nunca en texto plano) + `masked()` para UI
   - `Config/NFLog.swift` — log en `~/Library/Application Support/Nanflow/nanflow.log`
-  - `LLM/NanClient.swift` — whisper (`/v1/audio/transcriptions`, multipart, **también in-memory con `transcribe(samples:)`**) + chat (`/v1/chat/completions`, con `chat_template_kwargs: {enable_thinking: false}` para latencia <2s) + `prewarm()` (calienta DNS+TLS al lanzar)
+  - `LLM/NanClient.swift` — whisper (`/v1/audio/transcriptions`, multipart, **también in-memory con `transcribe(samples:)`**) + chat (`/v1/chat/completions`, con `chat_template_kwargs: {enable_thinking: false}` para latencia <2s) + `prewarm()` (calienta DNS+TLS; comparte **una sola URLSession** para que la conexión se reutilice de verdad)
   - `LLM/Formatter.swift` — **TextStyle** (off/natural/informal/formal) con prompts por estilo + diccionario personalizado; `.off` no debe llamar al LLM (lo salta el motor)
   - `Text/VoiceCommands.swift` — comandos de dictado ("nueva línea"→\n, "punto y aparte"→\n\n) + limpieza de puntuación colgante
   - `Export/MeetingExporter.swift` — Markdown al portapapeles + PDF via NSPrintOperation (jobDisposition .save)
@@ -33,12 +35,12 @@ open build/Nanflow.app                 # lanzar la app (menú bar)
   - `Audio/WavEncoder.swift` — WAV PCM16 en memoria (sin disco en el hot path de dictado)
   - `Audio/SystemAudioRecorder.swift` — **Core Audio Process Tap** (macOS 14.2+, SIN permiso de pantalla): tap global excluyendo nuestro proceso → aggregate device → IOProc @48k
   - `Audio/AudioMixer.swift` — resample (drena con `.endOfStream`) + mezcla con offset + `trimSilence` (recorta silencios cabecera/cola, ~15% menos upload)
-  - `HotKey/HotKeyMonitor.swift` — CGEventTap en **hilo dedicado** (no en el run loop de NSApp), maneja `flagsChanged` con code=0 (eventos sintéticos) y con keycode real (teclado físico), suprime la tecla, reactiva el tap si el sistema lo deshabilita
-  - `Dictation/DictationEngine.swift` — máquina de estados idle→recording→transcribing→formatting (usa `transition(from:to:)`, NUNCA lock anidado → deadlock); respeta `style` y `trimSilenceEnabled`
+  - `HotKey/HotKeyMonitor.swift` — CGEventTap en **hilo dedicado** (no en el run loop de NSApp), maneja `flagsChanged` con code=0 (eventos sintéticos) y con keycode real (teclado físico), suprime la tecla, reactiva el tap si el sistema lo deshabilita, **Esc cancela** y `stop()` cierra el run loop (sin hilos huérfanos)
+  - `Dictation/DictationEngine.swift` — máquina de estados idle→recording→transcribing→formatting (usa `transition(from:to:)`, NUNCA lock anidado → deadlock); respeta `style`, `trimSilenceEnabled` y `fastShortUtterances`; VAD evita subir silencio; si el LLM falla pega la transcripción cruda; cancelación por generación
   - `Meeting/MeetingDetector.swift` — poll 2s: bundle IDs de apps nativas + pestañas meet.google.com en Chrome/Edge/Brave (AppleScript best-effort)
-  - `Meeting/MeetingEngine.swift` — graba sistema+micro mezclados → WAV en AppSupport/meetings → whisper → resumen LLM → history
+  - `Meeting/MeetingEngine.swift` — graba sistema+micro mezclados → WAV en AppSupport/meetings → whisper → resumen LLM → history; el estado sigue en `.processing` hasta que acaba la transcripción; se puede iniciar manualmente desde el menú
   - `TextInsert/TextInserter.swift` — clipboard backup → Cmd+V sintético → restaura clipboard
-  - `History/HistoryStore.swift` — JSON en AppSupport, **iso8601 en lectura Y escritura**
+  - `History/HistoryStore.swift` — JSON en AppSupport, **iso8601 en lectura Y escritura**, instancia **`HistoryStore.shared`** para que UI y motores no se pisen
 - **nanflow** (app menú-bar):
   - `AppDelegate.swift` — status item, menú (Ajustes…, Estilo, Atajo, Historial, permisos), wiring de motores
   - `SettingsStore.swift` — ObservableObject con @Published persistidos en UserDefaults, aplica cambios en vivo a los motores
@@ -57,6 +59,9 @@ open build/Nanflow.app                 # lanzar la app (menú bar)
 6. **whisper de Nan**: el campo `language` de la respuesta miente (dice "en" para español); hay heurística `looksSpanish` en NanClient.
 7. **qwen3.8-flash** (default NAN_MODEL) formatea bien y rápido; `glm5.3-flash` es reasoning y tarda 8s+.
 8. **OpenRouter**: los modelos whisper NO aparecen en `/models` pero `/audio/transcriptions` funciona igual (multipart OpenAI). Los LLM del catálogo con `input_modalities` audio se excluyen (no sirven para chat de texto). Para desactivar thinking: `"reasoning": {"exclude": true, "enabled": false}` (el `chat_template_kwargs` de Nan NO funciona ahí).
+9. **Historial**: usa `HistoryStore.shared`. Varias instancias con el mismo JSON se pisan al escribir (cada una tiene su copia en memoria).
+10. **Prewarm**: crear un `NanClient` nuevo por petición hacía que el HEAD de prewarm no compartiera conexión. Ahora `ProviderSettings` cachea el cliente y `NanClient` comparte URLSession.
+11. **Dictado corto**: Natural con ≤3 palabras y sin diccionario/comandos omite el LLM (~1.3s vs ~2.0s). `.off` no debe añadir puntuación.
 
 ## Testing E2E sin manos
 

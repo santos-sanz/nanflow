@@ -19,7 +19,7 @@ struct SettingsView: View {
             }
             .padding(20)
         }
-        .frame(width: 620, height: 860)
+        .frame(width: 620, height: 820)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { store.refreshHistory() }
     }
@@ -152,6 +152,11 @@ struct SettingsView: View {
             .pickerStyle(.menu)
             Toggle("Trim leading/trailing silence (faster transcription)", isOn: $store.trimSilence)
                 .toggleStyle(.switch)
+            Toggle("Skip the LLM for very short dictations (≈1 s faster)", isOn: $store.fastShortUtterances)
+                .toggleStyle(.switch)
+            Text("Short phrases like “sí”, “gracias” or “hola” get deterministic punctuation instead of an LLM round-trip.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

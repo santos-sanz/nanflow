@@ -16,13 +16,14 @@ final class SettingsStore: ObservableObject {
         static let meetingsEnabled = "nanflow.meetings"
         static let meetingsAutoRecord = "nanflow.meetings.autorecord"
         static let trimSilence = "nanflow.trim"
+        static let fastShortUtterances = "nanflow.fastShort"
         static let dictionary = "nanflow.dictionary"
     }
 
     weak var dictation: DictationEngine?
     weak var meetings: MeetingEngine?
     weak var detector: MeetingDetector?
-    var history = HistoryStore()
+    let history = HistoryStore.shared
     var onHotKeyChanged: ((HotKey) -> Void)?
 
     @Published var hotKey: HotKey {
@@ -47,6 +48,12 @@ final class SettingsStore: ObservableObject {
         didSet {
             defaults.set(trimSilence, forKey: Keys.trimSilence)
             dictation?.trimSilenceEnabled = trimSilence
+        }
+    }
+    @Published var fastShortUtterances: Bool {
+        didSet {
+            defaults.set(fastShortUtterances, forKey: Keys.fastShortUtterances)
+            dictation?.fastShortUtterances = fastShortUtterances
         }
     }
     @Published var dictionaryText: String {
@@ -88,15 +95,18 @@ final class SettingsStore: ObservableObject {
     private var didSetGuard = false
 
     var currentKey: String? {
-        keyRevision; return ProviderSettings.shared.apiKey(for: provider)
+        _ = keyRevision
+        return ProviderSettings.shared.apiKey(for: provider)
     }
 
     var keySourceLabel: String? {
-        keyRevision; return ProviderSettings.shared.keySource(for: provider)
+        _ = keyRevision
+        return ProviderSettings.shared.keySource(for: provider)
     }
 
     var providerConfigured: Bool {
-        keyRevision; return ProviderSettings.shared.isConfigured(for: provider)
+        _ = keyRevision
+        return ProviderSettings.shared.isConfigured(for: provider)
     }
 
     var sttSelectable: Bool { provider.sttModelSelectable }
@@ -111,6 +121,7 @@ final class SettingsStore: ObservableObject {
         meetingsEnabled = defaults.object(forKey: Keys.meetingsEnabled) as? Bool ?? true
         meetingsAutoRecord = defaults.object(forKey: Keys.meetingsAutoRecord) as? Bool ?? true
         trimSilence = defaults.object(forKey: Keys.trimSilence) as? Bool ?? true
+        fastShortUtterances = defaults.object(forKey: Keys.fastShortUtterances) as? Bool ?? true
         dictionaryText = defaults.string(forKey: Keys.dictionary) ?? ""
         provider = ProviderSettings.shared.provider
     }
@@ -123,6 +134,7 @@ final class SettingsStore: ObservableObject {
         keyDraft = ""
         showKeyEditor = false
         fetchModels()
+        ProviderSettings.shared.prewarmIfNeeded()
     }
 
     func fetchModels() {
@@ -160,6 +172,7 @@ final class SettingsStore: ObservableObject {
         keyRevision &+= 1
         objectWillChange.send()
         fetchModels()
+        ProviderSettings.shared.prewarm()
     }
 
     func clearKey() {
@@ -171,6 +184,7 @@ final class SettingsStore: ObservableObject {
     func syncEngines() {
         dictation?.style = style
         dictation?.trimSilenceEnabled = trimSilence
+        dictation?.fastShortUtterances = fastShortUtterances
         dictation?.dictionary = dictionaryLines
     }
 
@@ -198,7 +212,7 @@ final class SettingsStore: ObservableObject {
     }
 
     var launchAtLogin: Bool {
-        (try? SMAppService.mainApp.status) == .enabled
+        SMAppService.mainApp.status == .enabled
     }
 
     // MARK: - Permissions

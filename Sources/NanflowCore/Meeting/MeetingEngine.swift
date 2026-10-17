@@ -24,7 +24,7 @@ public final class MeetingEngine: @unchecked Sendable {
 
     public var saveAudio = true
 
-    public init(history: HistoryStore = HistoryStore()) {
+    public init(history: HistoryStore = .shared) {
         self.history = history
     }
 
@@ -137,9 +137,6 @@ public final class MeetingEngine: @unchecked Sendable {
                 )
                 NFLog.write("meeting: audio saved \(duration)s -> \(wavURL.lastPathComponent)")
                 self.history.add(entry)
-                self.setState(.idle)
-                self.onResult?(entry)
-
                 await self.processTranscription(entry: entry, wavURL: wavURL)
             } catch {
                 self.setState(.idle)
@@ -164,6 +161,7 @@ public final class MeetingEngine: @unchecked Sendable {
             if transcript.text.isEmpty {
                 updated.summary = nil
                 history.update(updated)
+                setState(.idle)
                 onResult?(updated)
                 onError?("La reunión no tenía habla detectable (sin transcripción)")
                 return
@@ -173,8 +171,10 @@ public final class MeetingEngine: @unchecked Sendable {
             updated.summary = summary.isEmpty ? nil : summary
             NFLog.write("meeting: summary \(summary.prefix(80))")
             history.update(updated)
+            setState(.idle)
             onResult?(updated)
         } catch {
+            setState(.idle)
             onError?("Transcripción de reunión falló: \(error.localizedDescription)")
         }
     }

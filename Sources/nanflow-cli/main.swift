@@ -31,6 +31,31 @@ func providerOverride() -> Provider? {
     return nil
 }
 
+func readSamples(url: URL) throws -> (samples: [Float], sampleRate: Double) {
+    let file = try AVAudioFile(forReading: url)
+    let format = file.processingFormat
+    let frames = AVAudioFrameCount(file.length)
+    guard frames > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else {
+        return ([], 16_000)
+    }
+    try file.read(into: buffer)
+    guard let channels = buffer.floatChannelData else { return ([], 16_000) }
+    let channelCount = Int(format.channelCount)
+    let frameCount = Int(buffer.frameLength)
+    var mono = [Float](repeating: 0, count: frameCount)
+    for c in 0..<channelCount {
+        let data = channels[c]
+        for i in 0..<frameCount { mono[i] += data[i] }
+    }
+    if channelCount > 1 {
+        for i in 0..<frameCount { mono[i] /= Float(channelCount) }
+    }
+    if format.sampleRate != 16_000 {
+        mono = AudioMixer.resample(samples: mono, fromRate: format.sampleRate, toRate: 16_000)
+    }
+    return (mono, 16_000)
+}
+
 // MARK: - Commands
 
 func cmdTranscribe() async {
@@ -51,24 +76,45 @@ func cmdTranscribe() async {
 }
 
 func cmdPipeline() async {
-    guard args.count >= 2 else { fail("usage: nanflow-cli pipeline <audio> [--no-format] [--provider nan|openrouter]") }
+    guard args.count >= 2 else { fail("usage: nanflow-cli pipeline <audio> [--no-format] [--no-fast] [--no-vad] [--provider nan|openrouter]") }
     let url = URL(fileURLWithPath: args[1])
     guard FileManager.default.fileExists(atPath: url.path) else { fail("file not found: \(args[1])") }
     let noFormat = args.contains("--no-format")
+    let noFast = args.contains("--no-fast")
     let p = providerOverride()
     let cfg = ProviderSettings.shared.effectiveConfig(for: p)
     guard cfg.isConfigured else { fail("sin API key para \(cfg.provider.label)") }
-    let client = NanClient(config: cfg)
+    let client = ProviderSettings.shared.client(for: p)
     do {
+        if !args.contains("--no-vad"), let loaded = try? readSamples(url: url),
+           !AudioMixer.hasSpeech(samples: loaded.samples, sampleRate: loaded.sampleRate) {
+            print("provider: \(cfg.provider.label) · stt=\(cfg.whisperModel) · llm=\(cfg.model)")
+            print("vad:      no se detectó voz — no se llama a la API")
+            print("timing:   stt 0ms · llm 0ms · total 0ms")
+            return
+        }
+
         let t0 = Date()
         let out = try await client.transcribe(audioURL: url)
         let t1 = Date()
         print("provider: \(cfg.provider.label) · stt=\(cfg.whisperModel) · llm=\(cfg.model)")
         print("raw:      \(out.text)")
         guard !noFormat, !out.text.isEmpty else { return }
-        let formatted = try await Formatter.formatDictation(out.text, style: .natural)
+        let result = await Formatter.formatForDictation(out.text, style: .natural, dictionary: [], fastShort: !noFast) { raw, style, dictionary in
+            try await client.chat(
+                system: Formatter.systemPrompt(for: style, dictionary: dictionary),
+                user: raw,
+                maxTokens: 2048,
+                temperature: 0.1
+            )
+        }
         let t2 = Date()
-        print("final:    \(formatted.trimmingCharacters(in: .whitespacesAndNewlines))")
+        print("final:    \(result.text.trimmingCharacters(in: .whitespacesAndNewlines))")
+        if result.usedFallback {
+            print("llm:      fallback a transcripción cruda")
+        } else if !noFast && Formatter.shouldSkipLLM(out.text, style: .natural, dictionary: []) {
+            print("llm:      omitido (dictado corto)")
+        }
         print("timing:   stt \(Int(t1.timeIntervalSince(t0) * 1000))ms · llm \(Int(t2.timeIntervalSince(t1) * 1000))ms · total \(Int(t2.timeIntervalSince(t0) * 1000))ms")
     } catch { fail("\(error)") }
 }

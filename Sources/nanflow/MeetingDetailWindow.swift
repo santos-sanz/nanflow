@@ -88,7 +88,7 @@ final class MeetingDetailModel: ObservableObject {
     @Published var saved = false
     @Published var pdfURL: URL?
 
-    private let history = HistoryStore()
+    private let history = HistoryStore.shared
 
     let appName: String
     let duration: TimeInterval
@@ -123,7 +123,7 @@ final class MeetingDetailModel: ObservableObject {
 
     func copyMarkdown() {
         save()
-        var entry = history.all().first(where: { $0.id == entryId }) ?? HistoryEntry(kind: .meeting)
+        let entry = history.all().first(where: { $0.id == entryId }) ?? HistoryEntry(kind: .meeting)
         MeetingExporter.copyToClipboard(entry)
     }
 

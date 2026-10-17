@@ -1,6 +1,23 @@
 import AppKit
 import Foundation
 
+public protocol DictationService: Sendable {
+    func transcribe(samples: [Float], sampleRate: Double) async throws -> TranscriptionOutput
+    func format(_ raw: String, style: TextStyle, dictionary: [String]) async throws -> String
+}
+
+public struct LiveDictationService: DictationService {
+    public init() {}
+
+    public func transcribe(samples: [Float], sampleRate: Double) async throws -> TranscriptionOutput {
+        try await ProviderSettings.shared.client().transcribe(samples: samples, sampleRate: sampleRate)
+    }
+
+    public func format(_ raw: String, style: TextStyle, dictionary: [String]) async throws -> String {
+        try await Formatter.formatDictation(raw, style: style, dictionary: dictionary)
+    }
+}
+
 /// Orchestrates the hold-to-talk dictation flow:
 /// hotkey press -> mic recording -> (release) -> Nan whisper -> LLM format -> paste at cursor.
 public final class DictationEngine: @unchecked Sendable {
@@ -14,25 +31,34 @@ public final class DictationEngine: @unchecked Sendable {
     public var onStateChange: (@Sendable (State) -> Void)?
     public var onResult: (@Sendable (HistoryEntry) -> Void)?
     public var onError: (@Sendable (String) -> Void)?
+    public var onNotice: (@Sendable (String) -> Void)?
 
     public var style: TextStyle = .natural
     public var trimSilenceEnabled = true
     public var dictionary: [String] = []
+    public var fastShortUtterances = true
 
     private let mic = MicRecorder()
     private let history: HistoryStore
+    private let service: DictationService
     private var state: State = .idle
     private let lock = NSLock()
     private let minDuration: TimeInterval = 0.35
+    private var generation = 0
+    private var workTask: Task<Void, Never>?
+    private var frontAppAtStart = ""
 
-    public init(history: HistoryStore = HistoryStore()) {
+    public init(history: HistoryStore = .shared, service: DictationService = LiveDictationService()) {
         self.history = history
+        self.service = service
     }
 
     public var currentState: State {
         lock.lock(); defer { lock.unlock() }
         return state
     }
+
+    public var isBusy: Bool { currentState != .idle }
 
     public var level: Float { mic.level }
 
@@ -52,15 +78,25 @@ public final class DictationEngine: @unchecked Sendable {
         return true
     }
 
-    public func startDictation() {
-        NFLog.write("dict: startRecording")
-        guard transition(from: .idle, to: .recording) else { return }
+    @discardableResult
+    public func startDictation() -> Bool {
+        guard transition(from: .idle, to: .recording) else {
+            NFLog.write("dict: ignored start (state=\(currentState))")
+            return false
+        }
+        lock.lock()
+        generation += 1
+        lock.unlock()
 
+        frontAppAtStart = Self.frontmostAppName()
+        NFLog.write("dict: startRecording")
         do {
             try mic.start()
+            return true
         } catch {
             setState(.idle)
             onError?("No se pudo acceder al micrófono: \(error.localizedDescription)")
+            return false
         }
     }
 
@@ -70,72 +106,162 @@ public final class DictationEngine: @unchecked Sendable {
 
         let recording = mic.stop()
         let startedAt = mic.startedAt
+        let app = frontAppAtStart
+        lock.lock()
+        let gen = generation
+        lock.unlock()
 
-        Task.detached { [weak self] in
+        let task = Task.detached { [weak self] in
             guard let self else { return }
-            guard let recording else {
-                self.setState(.idle)
+            await self.process(recording: recording, startedAt: startedAt, app: app, generation: gen)
+        }
+        lock.lock()
+        if generation == gen { workTask = task }
+        lock.unlock()
+    }
+
+    private func process(recording: (samples: [Float], sampleRate: Double, duration: TimeInterval)?, startedAt: Date?, app: String, generation gen: Int) async {
+        guard isCurrent(gen) else { return }
+        guard let recording else {
+            finishIfCurrent(gen)
+            return
+        }
+
+        let audioDuration = Double(recording.samples.count) / recording.sampleRate
+        let wallDuration = startedAt.map { Date().timeIntervalSince($0) } ?? audioDuration
+        NFLog.write("dict: captured \(recording.samples.count) samples, \(audioDuration)s")
+
+        guard !recording.samples.isEmpty, wallDuration >= minDuration else {
+            finishIfCurrent(gen)
+            onNotice?("Dictado demasiado corto")
+            return
+        }
+
+        let trimmed = trimSilenceEnabled
+            ? AudioMixer.trimSilence(samples: recording.samples, sampleRate: recording.sampleRate)
+            : recording.samples
+        NFLog.write("dict: trimmed \(recording.samples.count) -> \(trimmed.count) samples")
+
+        guard AudioMixer.hasSpeech(samples: trimmed, sampleRate: recording.sampleRate) else {
+            finishIfCurrent(gen)
+            NFLog.write("dict: no speech detected, skipped upload")
+            onNotice?("No se detectó voz")
+            return
+        }
+
+        do {
+            let t0 = Date()
+            let transcript = try await service.transcribe(samples: trimmed, sampleRate: recording.sampleRate)
+            guard isCurrent(gen) else { return }
+            let t1 = Date()
+            guard !transcript.text.isEmpty else {
+                finishIfCurrent(gen)
+                onNotice?("No se detectó voz")
                 return
             }
-            let duration = startedAt.map { Date().timeIntervalSince($0) } ?? 0
-            NFLog.write("dict: captured \(recording.samples.count) samples, \(duration)s")
-            if recording.samples.isEmpty || duration < self.minDuration {
-                self.setState(.idle)
-                return
+
+            let shouldFormat = style != .off && !(fastShortUtterances && Formatter.shouldSkipLLM(transcript.text, style: style, dictionary: dictionary))
+            if shouldFormat {
+                guard transitionIfCurrent(gen, from: .transcribing, to: .formatting) else { return }
             }
+            let result = await Formatter.formatForDictation(transcript.text, style: style, dictionary: dictionary, fastShort: fastShortUtterances) { raw, textStyle, dict in
+                guard self.isCurrent(gen) else { throw CancellationError() }
+                return try await self.service.format(raw, style: textStyle, dictionary: dict)
+            }
+            guard isCurrent(gen), !Task.isCancelled else { return }
+            if result.usedFallback {
+                NFLog.write("dict: format failed, pasting raw transcript")
+                onNotice?("No se pudo pulir el texto; se pegó la transcripción.")
+            }
+            let formattedText = result.text
+            let t2 = Date()
 
-            let trimmed = trimSilenceEnabled
-                ? AudioMixer.trimSilence(samples: recording.samples, sampleRate: recording.sampleRate)
-                : recording.samples
-            NFLog.write("dict: trimmed \(recording.samples.count) -> \(trimmed.count) samples")
-            do {
-                let t0 = Date()
-                let transcript = try await ProviderSettings.shared.client().transcribe(samples: trimmed, sampleRate: recording.sampleRate)
-                let t1 = Date()
+            let entry = HistoryEntry(
+                timestamp: startedAt ?? Date(),
+                kind: .dictation,
+                app: app,
+                audioDuration: audioDuration,
+                transcriptionMs: Int(t1.timeIntervalSince(t0) * 1000),
+                formattingMs: Int(t2.timeIntervalSince(t1) * 1000),
+                rawText: transcript.text,
+                finalText: formattedText
+            )
 
-                let formattedText: String
-                if self.style != .off, !transcript.text.isEmpty {
-                    self.setState(.formatting)
-                    formattedText = try await Formatter.formatDictation(transcript.text, style: self.style, dictionary: self.dictionary)
-                } else {
-                    formattedText = VoiceCommands.apply(transcript.text)
-                }
-                let t2 = Date()
-
-                let frontApp = Self.frontmostAppName()
-                let entry = HistoryEntry(
-                    timestamp: startedAt ?? Date(),
-                    kind: .dictation,
-                    app: frontApp,
-                    audioDuration: duration,
-                    transcriptionMs: Int(t1.timeIntervalSince(t0) * 1000),
-                    formattingMs: Int(t2.timeIntervalSince(t1) * 1000),
-                    rawText: transcript.text,
-                    finalText: formattedText
-                )
-                self.history.add(entry)
-                let cfg = ProviderSettings.shared.effectiveConfig()
-                NFLog.write("dict: entry saved [\(cfg.provider.label)/\(cfg.whisperModel)+\(cfg.model)] raw=\(transcript.text.prefix(60)) final=\(formattedText.prefix(60))")
-
-                if !formattedText.isEmpty {
+            var insertError: Error?
+            if !formattedText.isEmpty {
+                do {
                     try await MainActor.run {
                         try TextInserter.insert(formattedText)
                     }
+                } catch {
+                    insertError = error
                 }
-                self.setState(.idle)
-                self.onResult?(entry)
-            } catch {
-                NFLog.write("dict: ERROR \(error)")
-                self.setState(.idle)
-                self.onError?("\(error.localizedDescription)")
             }
+            guard isCurrent(gen) else { return }
+
+            history.add(entry)
+            let cfg = ProviderSettings.shared.effectiveConfig()
+            NFLog.write("dict: entry saved [\(cfg.provider.label)/\(cfg.whisperModel)+\(cfg.model)] raw=\(transcript.text.prefix(60)) final=\(formattedText.prefix(60))")
+            finishIfCurrent(gen, notice: nil)
+
+            if let insertError {
+                onError?("No se pudo pegar el texto: \(insertError.localizedDescription)")
+            } else {
+                onResult?(entry)
+            }
+        } catch {
+            guard isCurrent(gen), !Task.isCancelled else { return }
+            NFLog.write("dict: ERROR \(error)")
+            finishIfCurrent(gen)
+            onError?("\(error.localizedDescription)")
         }
     }
 
     public func cancelDictation() {
-        if currentState == .recording {
-            _ = mic.stop()
-            setState(.idle)
+        lock.lock()
+        let wasBusy = state != .idle
+        let wasRecording = state == .recording
+        generation += 1
+        let task = workTask
+        workTask = nil
+        state = .idle
+        lock.unlock()
+
+        task?.cancel()
+        if wasRecording { _ = mic.stop() }
+        guard wasBusy else { return }
+        NFLog.write("dict: cancelled")
+        DispatchQueue.main.async { [weak self] in
+            self?.onStateChange?(.idle)
+            self?.onNotice?("Dictado cancelado")
+        }
+    }
+
+    private func isCurrent(_ gen: Int) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        return generation == gen
+    }
+
+    @discardableResult
+    private func transitionIfCurrent(_ gen: Int, from expected: State, to new: State) -> Bool {
+        lock.lock()
+        guard generation == gen, state == expected else { lock.unlock(); return false }
+        state = new
+        lock.unlock()
+        DispatchQueue.main.async { [weak self] in self?.onStateChange?(new) }
+        return true
+    }
+
+    private func finishIfCurrent(_ gen: Int, notice: String? = nil) {
+        lock.lock()
+        guard generation == gen else { lock.unlock(); return }
+        workTask = nil
+        guard state != .idle else { lock.unlock(); return }
+        state = .idle
+        lock.unlock()
+        DispatchQueue.main.async { [weak self] in
+            self?.onStateChange?(.idle)
+            if let notice { self?.onNotice?(notice) }
         }
     }
 

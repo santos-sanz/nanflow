@@ -70,6 +70,48 @@ public enum AudioMixer {
         return out
     }
 
+    /// True when the clip contains enough voiced energy to be worth uploading.
+    /// A single click is ignored; very short clips require one voiced window.
+    public static func hasSpeech(samples: [Float], sampleRate: Double, threshold: Float = 0.008) -> Bool {
+        guard !samples.isEmpty else { return false }
+        let window = max(1, Int(sampleRate * 0.025))
+        var voiced = 0
+        var total = 0
+        var peak: Float = 0
+        var start = 0
+        while start < samples.count {
+            let end = min(start + window, samples.count)
+            var acc: Float = 0
+            for i in start..<end {
+                let v = samples[i]
+                acc += v * v
+                if abs(v) > peak { peak = abs(v) }
+            }
+            let rms = sqrt(acc / Float(end - start))
+            if rms >= threshold { voiced += 1 }
+            total += 1
+            start = end
+        }
+        return voiced >= min(2, total) && peak >= threshold * 1.5
+    }
+
+    /// Averages a list of same-length channels into one mono track.
+    public static func downmix(channels: [[Float]]) -> [Float] {
+        guard let first = channels.first, !first.isEmpty else { return [] }
+        let frames = first.count
+        var out = [Float](repeating: 0, count: frames)
+        var used: Float = 0
+        for channel in channels {
+            let n = min(frames, channel.count)
+            for i in 0..<n { out[i] += channel[i] }
+            used += 1
+        }
+        if used > 1 {
+            for i in 0..<frames { out[i] /= used }
+        }
+        return out
+    }
+
     /// Mixes two mono tracks already at the same rate. `offsetSeconds` = how much later trackB started relative to trackA.
     public static func mix(trackA: [Float], trackB: [Float], offsetSeconds: Double = 0, rate: Double = 16_000, gainA: Float = 1.0, gainB: Float = 1.0) -> [Float] {
         let skip = max(0, Int(offsetSeconds * rate))

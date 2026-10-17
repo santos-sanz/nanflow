@@ -69,7 +69,8 @@ public struct AppConfig: Sendable {
     ) {
         self.provider = provider
         self.apiKey = apiKey
-        self.baseURL = baseURL ?? provider.defaultBaseURL
+        let resolvedBaseURL = baseURL ?? provider.defaultBaseURL
+        self.baseURL = resolvedBaseURL.hasSuffix("/") ? String(resolvedBaseURL.dropLast()) : resolvedBaseURL
         self.model = model ?? provider.defaultLLMModel
         self.whisperModel = whisperModel ?? provider.defaultSTTModel
         self.keyFromEnv = keyFromEnv

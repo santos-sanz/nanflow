@@ -1,4 +1,3 @@
-import NanflowCore
 import ApplicationServices
 import CoreGraphics
 import Foundation
@@ -32,10 +31,14 @@ public enum HotKey: String, CaseIterable, Sendable {
 public final class HotKeyMonitor {
     public var onPress: (() -> Void)?
     public var onRelease: (() -> Void)?
+    public var onCancel: (() -> Bool)?
 
     private var tap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var tapThread: Thread?
+    private var tapRunLoop: CFRunLoop?
+    private let lifecycleLock = NSLock()
+    private var shouldStop = false
     private var hotKey: HotKey = .rightCommand
     private var isDown = false
 
@@ -45,6 +48,9 @@ public final class HotKeyMonitor {
 
     public func start(hotKey: HotKey) {
         stop()
+        lifecycleLock.lock()
+        shouldStop = false
+        lifecycleLock.unlock()
         self.hotKey = hotKey
         isDown = false
 
@@ -87,17 +93,37 @@ public final class HotKeyMonitor {
     }
 
     private func install(tap: CFMachPort) {
+        lifecycleLock.lock()
+        shouldStop = false
         self.tap = tap
+        lifecycleLock.unlock()
+
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        lifecycleLock.lock()
         runLoopSource = source
+        lifecycleLock.unlock()
+
         // El tap vive en su propio hilo con su propio run loop: así los cambios de modo
         // del run loop de NSApplication (burbuja, micrófono, paneles) no lo silencian.
         let thread = Thread { [weak self] in
-            guard let self, let source = self.runLoopSource else { return }
-            CFRunLoopAddSource(CFRunLoopGetCurrent(), source, .commonModes)
+            guard let self else { return }
+            let runLoop = CFRunLoopGetCurrent()
+            CFRunLoopAddSource(runLoop, source, .commonModes)
+
+            self.lifecycleLock.lock()
+            let stopping = self.shouldStop
+            if !stopping { self.tapRunLoop = runLoop }
+            self.lifecycleLock.unlock()
+
+            if stopping {
+                CFRunLoopRemoveSource(runLoop, source, .commonModes)
+                return
+            }
+
             CGEvent.tapEnable(tap: tap, enable: true)
             NFLog.write("hotkey: tap run loop arrancado")
             CFRunLoopRun()
+            NFLog.write("hotkey: tap run loop terminado")
         }
         thread.name = "nanflow.hotkey"
         thread.stackSize = 256 * 1024
@@ -106,20 +132,36 @@ public final class HotKeyMonitor {
     }
 
     public func stop() {
-        if let tap {
-            CGEvent.tapEnable(tap: tap, enable: false)
-            if let source = runLoopSource {
-                CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
-            }
-        }
+        lifecycleLock.lock()
+        shouldStop = true
+        let port = tap
+        let runLoop = tapRunLoop
+        let source = runLoopSource
         tap = nil
+        tapRunLoop = nil
         runLoopSource = nil
         isDown = false
+        lifecycleLock.unlock()
+
+        if let port { CGEvent.tapEnable(tap: port, enable: false) }
+        if let runLoop, let source {
+            CFRunLoopPerformBlock(runLoop, CFRunLoopMode.commonModes.rawValue) {
+                CFRunLoopRemoveSource(runLoop, source, .commonModes)
+                CFRunLoopStop(runLoop)
+            }
+            CFRunLoopWakeUp(runLoop)
+        } else if let source {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .commonModes)
+        }
     }
     /// Returns true if the event should pass through, false to suppress it.
     @discardableResult
     private func handle(type: CGEventType, event: CGEvent) -> Bool {
         let code = event.getIntegerValueField(.keyboardEventKeycode)
+
+        if type == .keyDown, code == 53, onCancel?() == true {
+            return false
+        }
 
         if UserDefaults.standard.bool(forKey: "nanflow.debug.taplog") {
             NFLog.write("tap: type=\(type.rawValue) code=\(code) flags=\(event.flags.rawValue)")

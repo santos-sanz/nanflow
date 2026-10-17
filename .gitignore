@@ -6,3 +6,4 @@ references/
 .DS_Store
 .env
 .swiftpm/
+*.dmg

@@ -11,7 +11,7 @@
 <p align="center">
   <img src="https://img.shields.io/badge/platform-macOS%2014.2%2B-black?logo=apple&logoColor=white" alt="macOS 14.2+">
   <img src="https://img.shields.io/badge/Swift-6-orange?logo=swift&logoColor=white" alt="Swift 6">
-  <img src="https://img.shields.io/badge/tests-51%2F51-brightgreen" alt="tests 51/51">
+  <img src="https://img.shields.io/badge/tests-66%2F66-brightgreen" alt="tests 66/66">
   <img src="https://img.shields.io/badge/dependencies-0-blueviolet" alt="zero dependencies">
 </p>
 
@@ -30,8 +30,13 @@ Everything is orchestrated from a small menu-bar app with a native SwiftUI contr
 | ✨ **Text styles** | **Off** (raw transcript, no LLM), **Natural**, **Informal**, **Formal** — switchable from the menu bar or the panel. Short Natural phrases skip the LLM (~33 % faster). |
 | 🛟 **Never loses a dictation** | If the LLM fails or is unreachable, the raw transcript is polished locally and pasted anyway. Silence is detected before upload (0 ms API time). |
 | 🔵 **Meetings** | Detects meetings by app or browser tab, or start one manually from the menu. Records system audio + mic, then transcribes and summarizes: Resumen / Decisiones / Acciones. Editable summary + transcript in a detail window, export to **Markdown (clipboard)** or **PDF**. |
-| 🗣️ **Voice commands** | Say "nueva línea" or "punto y aparte" to insert real line/paragraph breaks; "dos puntos" and "punto y coma" too. |
+| 🗣️ **Voice commands** | Say "nueva línea", "punto y aparte", "dos puntos", "punto y coma", "coma", "abrir/cerrar paréntesis", "comillas", "punto final" or "pulsa enter" — deterministic, no LLM round-trip. |
 | 📖 **Custom dictionary** | List names and terms once; the formatter spells them exactly as written. |
+| ⚡ **Snippets** | Trigger phrase → expansion (URLs, emails, whole prompts). An exact match skips the LLM (~0 ms). |
+| 🪄 **Transforms** | Resumir, lista de puntos, más formal, más informal, traducir a inglés o corregir gramática sobre tu último dictado — desde el menú, resultado al portapapeles. |
+| 📝 **Scratchpad** | A quick notes window; append any dictation with one menu click. Auto-saved as Markdown. |
+| 🎚️ **Mic & language** | Pick any input device (per UID) and pin Auto/Español/English. |
+| 📊 **Insights** | Total words, average WPM, dictation count and minutes, computed locally from your history. |
 | ⚡ **Low latency** | Silence trimming, in-memory WAV upload, shared URLSession + TLS prewarm on press, short-utterance fast path, latency-based provider routing. |
 | 🔀 **Two providers** | Nan or OpenRouter, with live model catalogs and per-provider selection. |
 | 🔒 **Privacy-first** | Audio travels only to your chosen API. Transcripts, meeting recordings and history never leave your Mac. |
@@ -140,7 +145,7 @@ What makes it fast: leading/trailing silence trim (−13 % upload), PCM16 WAV bu
 
 ```bash
 swift build -c release          # build everything
-swift test                      # 51 unit tests
+swift test                      # 66 unit tests
 ./scripts/build-app.sh release  # build/Nanflow.app, signed "Nanflow Dev"
 ./scripts/build-icon.sh          # regenerate AppIcon.icns and docs/logo.* from scripts/generate-icon.swift
 
@@ -189,6 +194,10 @@ tail ~/Library/Application\ Support/Nanflow/nanflow.log
 - [x] Custom dictionary for names and terms
 - [x] Voice commands ("nueva línea", "punto y aparte", "dos puntos", "punto y coma")
 - [x] Meeting report export — Markdown via clipboard + PDF
+- [x] Snippets (trigger → expansion, LLM bypass)
+- [x] Transforms on the last dictation
+- [x] Microphone selection and language pinning
+- [x] Scratchpad quick notes
 - [ ] Shareable transcript links
 - [x] VAD fast path for silent dictations (skip upload)
 - [ ] On-device VAD for automatic dictation stop

@@ -10,8 +10,11 @@ struct SettingsView: View {
                 header
                 providerSection
                 dictationSection
+                snippetsSection
                 styleSection
+                transformsSection
                 dictionarySection
+                insightsSection
                 meetingsSection
                 permissionsSection
                 historySection
@@ -157,6 +160,96 @@ struct SettingsView: View {
             Text("Short phrases like “sí”, “gracias” or “hola” get deterministic punctuation instead of an LLM round-trip.")
                 .font(.caption).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+
+            Picker("Language", selection: $store.language) {
+                ForEach(DictationLanguage.allCases, id: \.self) { lang in
+                    Text(lang.label).tag(lang)
+                }
+            }
+            .pickerStyle(.segmented)
+            Text("Auto lets the model detect it per utterance. Pinning a language can improve accuracy.")
+                .font(.caption).foregroundStyle(.secondary)
+
+            Picker("Microphone", selection: $store.micDeviceUID) {
+                Text("System default").tag("")
+                ForEach(store.micDevices) { device in
+                    Text(device.isDefault ? "\(device.name) (default)" : device.name).tag(device.uidTag)
+                }
+            }
+        }
+    }
+
+    private var snippetsSection: some View {
+        section("Snippets") {
+            Text("Say the trigger phrase and it is replaced by the expansion — URLs, emails, whole prompts. An exact match skips the LLM entirely.")
+                .font(.caption).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            if store.snippets.isEmpty {
+                Text("No snippets yet.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            ForEach($store.snippets) { $snippet in
+                HStack(spacing: 8) {
+                    TextField("Trigger", text: $snippet.trigger)
+                        .textFieldStyle(.roundedBorder)
+                    Image(systemName: "arrow.right")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                    TextField("Expansion", text: $snippet.expansion)
+                        .textFieldStyle(.roundedBorder)
+                    Button {
+                        store.snippets.removeAll { $0.id == snippet.id }
+                    } label: {
+                        Image(systemName: "trash")
+                            .foregroundStyle(.red)
+                    }
+                    .buttonStyle(.borderless)
+                    .help("Delete snippet")
+                }
+            }
+            HStack {
+                Button {
+                    store.addSnippet()
+                } label: {
+                    Label("Add snippet", systemImage: "plus")
+                }
+                .controlSize(.small)
+                Spacer()
+            }
+        }
+    }
+
+    private var transformsSection: some View {
+        section("Transforms") {
+            Text("Apply an AI transform to your last dictation from the menu bar:")
+                .font(.caption).foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(Formatter.TransformPreset.allCases, id: \.self) { preset in
+                    Label(preset.label, systemImage: "wand.and.stars")
+                        .font(.callout)
+                }
+            }
+            Text("The result is copied to the clipboard, ready to paste anywhere.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private var insightsSection: some View {
+        section("Insights") {
+            let stats = store.insights
+            HStack(spacing: 24) {
+                statTile(value: "\(stats.totalWords)", label: "total words")
+                statTile(value: "\(stats.averageWPM)", label: "avg WPM")
+                statTile(value: "\(stats.dictationCount)", label: "dictations")
+                statTile(value: "\(stats.totalMinutes)", label: "minutes")
+            }
+        }
+    }
+
+    private func statTile(value: String, label: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(value).font(.title3.bold())
+            Text(label).font(.caption2).foregroundStyle(.secondary)
         }
     }
 

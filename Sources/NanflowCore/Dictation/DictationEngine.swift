@@ -1,16 +1,44 @@
 import AppKit
 import Foundation
 
+public enum DictationLanguage: String, CaseIterable, Sendable {
+    case auto
+    case spanish = "es"
+    case english = "en"
+
+    public var label: String {
+        switch self {
+        case .auto: return "Automático"
+        case .spanish: return "Español"
+        case .english: return "English"
+        }
+    }
+
+    /// nil lets whisper auto-detect the language.
+    public var whisperCode: String? {
+        switch self {
+        case .auto: return nil
+        case .spanish: return "es"
+        case .english: return "en"
+        }
+    }
+}
+
 public protocol DictationService: Sendable {
-    func transcribe(samples: [Float], sampleRate: Double) async throws -> TranscriptionOutput
+    func transcribe(samples: [Float], sampleRate: Double, language: DictationLanguage) async throws -> TranscriptionOutput
     func format(_ raw: String, style: TextStyle, dictionary: [String]) async throws -> String
 }
 
 public struct LiveDictationService: DictationService {
     public init() {}
 
-    public func transcribe(samples: [Float], sampleRate: Double) async throws -> TranscriptionOutput {
-        try await ProviderSettings.shared.client().transcribe(samples: samples, sampleRate: sampleRate)
+    public func transcribe(samples: [Float], sampleRate: Double, language: DictationLanguage) async throws -> TranscriptionOutput {
+        try await ProviderSettings.shared.client().transcribe(
+            samples: samples,
+            sampleRate: sampleRate,
+            language: language.whisperCode,
+            prompt: SnippetsStore.shared.promptHints()
+        )
     }
 
     public func format(_ raw: String, style: TextStyle, dictionary: [String]) async throws -> String {
@@ -37,6 +65,9 @@ public final class DictationEngine: @unchecked Sendable {
     public var trimSilenceEnabled = true
     public var dictionary: [String] = []
     public var fastShortUtterances = true
+    public var language: DictationLanguage = .auto
+    public var snippets: SnippetsStore = .shared
+    public var preferredMicUID: String?
 
     private let mic = MicRecorder()
     private let history: HistoryStore
@@ -89,7 +120,8 @@ public final class DictationEngine: @unchecked Sendable {
         lock.unlock()
 
         frontAppAtStart = Self.frontmostAppName()
-        NFLog.write("dict: startRecording")
+        mic.preferredDeviceUID = preferredMicUID
+        NFLog.write("dict: startRecording lang=\(language.rawValue)")
         do {
             try mic.start()
             return true
@@ -151,13 +183,27 @@ public final class DictationEngine: @unchecked Sendable {
 
         do {
             let t0 = Date()
-            let transcript = try await service.transcribe(samples: trimmed, sampleRate: recording.sampleRate)
+            let transcript = try await service.transcribe(samples: trimmed, sampleRate: recording.sampleRate, language: language)
             guard isCurrent(gen) else { return }
             let t1 = Date()
             guard !transcript.text.isEmpty else {
                 finishIfCurrent(gen)
                 onNotice?("No se detectó voz")
                 return
+            }
+
+            if let exact = snippets.exactMatch(transcript.text) {
+                NFLog.write("dict: snippet exact match, skipped LLM")
+                return await finish(
+                    gen: gen,
+                    startedAt: startedAt,
+                    app: app,
+                    audioDuration: audioDuration,
+                    raw: transcript.text,
+                    final: exact,
+                    t0: t0,
+                    t1: t1
+                )
             }
 
             let shouldFormat = style != .off && !(fastShortUtterances && Formatter.shouldSkipLLM(transcript.text, style: style, dictionary: dictionary))
@@ -173,47 +219,60 @@ public final class DictationEngine: @unchecked Sendable {
                 NFLog.write("dict: format failed, pasting raw transcript")
                 onNotice?("No se pudo pulir el texto; se pegó la transcripción.")
             }
-            let formattedText = result.text
-            let t2 = Date()
-
-            let entry = HistoryEntry(
-                timestamp: startedAt ?? Date(),
-                kind: .dictation,
+            let formattedText = snippets.apply(result.text)
+            return await finish(
+                gen: gen,
+                startedAt: startedAt,
                 app: app,
                 audioDuration: audioDuration,
-                transcriptionMs: Int(t1.timeIntervalSince(t0) * 1000),
-                formattingMs: Int(t2.timeIntervalSince(t1) * 1000),
-                rawText: transcript.text,
-                finalText: formattedText
+                raw: transcript.text,
+                final: formattedText,
+                t0: t0,
+                t1: t1
             )
-
-            var insertError: Error?
-            if !formattedText.isEmpty {
-                do {
-                    try await MainActor.run {
-                        try TextInserter.insert(formattedText)
-                    }
-                } catch {
-                    insertError = error
-                }
-            }
-            guard isCurrent(gen) else { return }
-
-            history.add(entry)
-            let cfg = ProviderSettings.shared.effectiveConfig()
-            NFLog.write("dict: entry saved [\(cfg.provider.label)/\(cfg.whisperModel)+\(cfg.model)] raw=\(transcript.text.prefix(60)) final=\(formattedText.prefix(60))")
-            finishIfCurrent(gen, notice: nil)
-
-            if let insertError {
-                onError?("No se pudo pegar el texto: \(insertError.localizedDescription)")
-            } else {
-                onResult?(entry)
-            }
         } catch {
             guard isCurrent(gen), !Task.isCancelled else { return }
             NFLog.write("dict: ERROR \(error)")
             finishIfCurrent(gen)
             onError?("\(error.localizedDescription)")
+        }
+    }
+
+    /// Saves the entry, pastes at the cursor and reports the result.
+    private func finish(gen: Int, startedAt: Date?, app: String, audioDuration: TimeInterval, raw: String, final: String, t0: Date, t1: Date) async {
+        let t2 = Date()
+        let entry = HistoryEntry(
+            timestamp: startedAt ?? Date(),
+            kind: .dictation,
+            app: app,
+            audioDuration: audioDuration,
+            transcriptionMs: Int(t1.timeIntervalSince(t0) * 1000),
+            formattingMs: Int(t2.timeIntervalSince(t1) * 1000),
+            rawText: raw,
+            finalText: final
+        )
+
+        var insertError: Error?
+        if !final.isEmpty {
+            do {
+                try await MainActor.run {
+                    try TextInserter.insert(final)
+                }
+            } catch {
+                insertError = error
+            }
+        }
+        guard isCurrent(gen) else { return }
+
+        history.add(entry)
+        let cfg = ProviderSettings.shared.effectiveConfig()
+        NFLog.write("dict: entry saved [\(cfg.provider.label)/\(cfg.whisperModel)+\(cfg.model)] raw=\(raw.prefix(60)) final=\(final.prefix(60))")
+        finishIfCurrent(gen)
+
+        if let insertError {
+            onError?("No se pudo pegar el texto: \(insertError.localizedDescription)")
+        } else {
+            onResult?(entry)
         }
     }
 

@@ -3,24 +3,39 @@ import Foundation
 /// Deterministic dictation voice commands, applied after (or instead of) LLM formatting.
 public enum VoiceCommands {
     /// Commands -> replacement. Spanish and English, matched case-insensitively with
-    /// optional surrounding punctuation/space noise.
+    /// optional surrounding punctuation/space noise. Applied longest-phrase-first.
     public static let replacements: [(phrases: [String], replacement: String)] = [
         (["punto y aparte", "new paragraph"], "\n\n"),
         (["nueva línea", "nueva linea", "new line"], "\n"),
+        (["pulsa enter", "pulsa intro", "press enter"], "\n"),
         (["punto y coma", "semicolon"], ";"),
         (["dos puntos", "colon"], ":"),
+        (["abrir paréntesis", "abrir parentesis", "open parenthesis"], "("),
+        (["cerrar paréntesis", "cerrar parentesis", "close parenthesis"], ")"),
+        (["comillas", "quote"], "\""),
+        (["punto final", "full stop"], "."),
+        (["coma", "comma"], ","),
     ]
 
     /// Applies the commands to the text and cleans stray punctuation around the breaks.
     public static func apply(_ text: String) -> String {
         guard !text.isEmpty else { return text }
         var out = text
+
+        var entries: [(pattern: String, replacement: String)] = []
         for (phrases, replacement) in replacements {
             for phrase in phrases {
-                out = replacePhrase(out, phrase: phrase, with: replacement)
+                entries.append((NSRegularExpression.escapedPattern(for: phrase), replacement))
             }
         }
-        return cleanupBreaks(out)
+        // Longest phrases first so "punto y coma" wins over "coma".
+        entries.sort { $0.pattern.count > $1.pattern.count }
+        for entry in entries {
+            guard let regex = try? NSRegularExpression(pattern: "(?i)\(entry.pattern)") else { continue }
+            let range = NSRange(out.startIndex..., in: out)
+            out = regex.stringByReplacingMatches(in: out, range: range, withTemplate: entry.replacement)
+        }
+        return cleanupSpacing(cleanupBreaks(out))
     }
 
     /// Removes punctuation dangling at line starts and spaces around breaks
@@ -42,12 +57,38 @@ public enum VoiceCommands {
         return out
     }
 
-    private static func replacePhrase(_ text: String, phrase: String, with replacement: String) -> String {
-        // Permite "nueva línea", "Nueva Línea", "nueva línea," etc.
-        let pattern = NSRegularExpression.escapedPattern(for: phrase)
-        guard let regex = try? NSRegularExpression(pattern: "(?i)\(pattern)") else { return text }
-        let range = NSRange(text.startIndex..., in: text)
-        return regex.stringByReplacingMatches(in: text, range: range, withTemplate: replacement)
+    /// "uno , dos" -> "uno, dos", "Hola .  Mundo" -> "Hola. Mundo", "( x)" -> "(x)".
+    static func cleanupSpacing(_ text: String) -> String {
+        var out = text
+        if let before = try? NSRegularExpression(pattern: "[ \\t]+([,.;:!?])") {
+            out = before.stringByReplacingMatches(
+                in: out,
+                range: NSRange(out.startIndex..., in: out),
+                withTemplate: "$1"
+            )
+        }
+        if let afterOpen = try? NSRegularExpression(pattern: "\\([ \\t]+") {
+            out = afterOpen.stringByReplacingMatches(
+                in: out,
+                range: NSRange(out.startIndex..., in: out),
+                withTemplate: "("
+            )
+        }
+        if let beforeClose = try? NSRegularExpression(pattern: "[ \\t]+\\)") {
+            out = beforeClose.stringByReplacingMatches(
+                in: out,
+                range: NSRange(out.startIndex..., in: out),
+                withTemplate: ")"
+            )
+        }
+        if let double = try? NSRegularExpression(pattern: "[ \\t]{2,}") {
+            out = double.stringByReplacingMatches(
+                in: out,
+                range: NSRange(out.startIndex..., in: out),
+                withTemplate: " "
+            )
+        }
+        return out
     }
 
     /// True if the text contains at least one command phrase.

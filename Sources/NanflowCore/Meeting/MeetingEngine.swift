@@ -64,7 +64,7 @@ public final class MeetingEngine: @unchecked Sendable {
         Task.detached { [weak self] in
             guard let self else { return }
             do {
-                try await self.systemAudio.start()
+                try self.systemAudio.start()
             } catch {
                 self.sysStartedAt = nil
                 self.onError?("Audio del sistema no disponible: \(error.localizedDescription) (solo micrófono)")
@@ -96,7 +96,7 @@ public final class MeetingEngine: @unchecked Sendable {
 
                 var sysSamples: [Float] = []
                 var offset: Double = 0
-                if let sysData = await self.systemAudioData() {
+                if let sysData = self.systemAudio.stop() {
                     sysSamples = AudioMixer.resample(samples: sysData.samples, fromRate: sysData.sampleRate, toRate: 16_000)
                     if let micStart, let sysStart {
                         offset = max(0, sysStart.timeIntervalSince(micStart))
@@ -143,11 +143,6 @@ public final class MeetingEngine: @unchecked Sendable {
                 self.onError?("Error procesando la reunión: \(error.localizedDescription)")
             }
         }
-    }
-
-    private func systemAudioData() async -> (samples: [Float], sampleRate: Double)? {
-        // stop() blocks briefly on semaphore; run off main
-        return systemAudio.stop()
     }
 
     private func processTranscription(entry: HistoryEntry, wavURL: URL) async {

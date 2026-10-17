@@ -18,6 +18,8 @@ final class SettingsStore: ObservableObject {
         static let trimSilence = "nanflow.trim"
         static let fastShortUtterances = "nanflow.fastShort"
         static let dictionary = "nanflow.dictionary"
+        static let language = "nanflow.language"
+        static let micDeviceUID = "nanflow.mic.uid"
     }
 
     weak var dictation: DictationEngine?
@@ -67,6 +69,21 @@ final class SettingsStore: ObservableObject {
             .components(separatedBy: .newlines)
             .map { $0.trimmingCharacters(in: .whitespaces) }
             .filter { !$0.isEmpty }
+    }
+    @Published var language: DictationLanguage {
+        didSet {
+            defaults.set(language.rawValue, forKey: Keys.language)
+            dictation?.language = language
+        }
+    }
+    @Published var micDeviceUID: String {
+        didSet {
+            defaults.set(micDeviceUID, forKey: Keys.micDeviceUID)
+            dictation?.preferredMicUID = micDeviceUID.isEmpty ? nil : micDeviceUID
+        }
+    }
+    @Published var snippets: [Snippet] {
+        didSet { SnippetsStore.shared.set(snippets) }
     }
     @Published var historyEntries: [HistoryEntry] = []
 
@@ -123,7 +140,26 @@ final class SettingsStore: ObservableObject {
         trimSilence = defaults.object(forKey: Keys.trimSilence) as? Bool ?? true
         fastShortUtterances = defaults.object(forKey: Keys.fastShortUtterances) as? Bool ?? true
         dictionaryText = defaults.string(forKey: Keys.dictionary) ?? ""
+        language = DictationLanguage(rawValue: defaults.string(forKey: Keys.language) ?? "") ?? .auto
+        micDeviceUID = defaults.string(forKey: Keys.micDeviceUID) ?? ""
+        snippets = SnippetsStore.shared.all()
         provider = ProviderSettings.shared.provider
+    }
+
+    var micDevices: [AudioDeviceInfo] { AudioDevices.inputDevices() }
+
+    var insights: InsightsSummary { Insights.summary(history.all()) }
+
+    func addSnippet() {
+        snippets.append(Snippet(trigger: "frase disparadora", expansion: "texto expandido"))
+    }
+
+    func removeSnippet(at offsets: IndexSet) {
+        snippets.remove(atOffsets: offsets)
+    }
+
+    func moveSnippet(from source: IndexSet, to destination: Int) {
+        snippets.move(fromOffsets: source, toOffset: destination)
     }
 
     func providerChanged() {
@@ -186,6 +222,9 @@ final class SettingsStore: ObservableObject {
         dictation?.trimSilenceEnabled = trimSilence
         dictation?.fastShortUtterances = fastShortUtterances
         dictation?.dictionary = dictionaryLines
+        dictation?.language = language
+        dictation?.snippets = SnippetsStore.shared
+        dictation?.preferredMicUID = micDeviceUID.isEmpty ? nil : micDeviceUID
     }
 
     func refreshHistory() {

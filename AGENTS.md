@@ -6,7 +6,7 @@ Clon de Wispr Flow para macOS con **transcripción vía API de Nan** (whisper cl
 
 ```bash
 swift build -c release                 # compilar todo
-swift test                             # unit tests (51 tests)
+swift test                             # unit tests (66 tests)
 ./scripts/build-icon.sh                # regenera scripts/AppIcon.icns + docs/logo.*
 ./scripts/build-app.sh release         # genera build/Nanflow.app (firmado con "Nanflow Dev")
 open build/Nanflow.app                 # lanzar la app (menú bar)
@@ -29,15 +29,19 @@ open build/Nanflow.app                 # lanzar la app (menú bar)
   - `Config/KeychainStore.swift` — SecItem genérico para API keys metidas por UI (nunca en texto plano) + `masked()` para UI
   - `Config/NFLog.swift` — log en `~/Library/Application Support/Nanflow/nanflow.log`
   - `LLM/NanClient.swift` — whisper (`/v1/audio/transcriptions`, multipart, **también in-memory con `transcribe(samples:)`**) + chat (`/v1/chat/completions`, con `chat_template_kwargs: {enable_thinking: false}` para latencia <2s) + `prewarm()` (calienta DNS+TLS; comparte **una sola URLSession** para que la conexión se reutilice de verdad)
-  - `LLM/Formatter.swift` — **TextStyle** (off/natural/informal/formal) con prompts por estilo + diccionario personalizado; `.off` no debe llamar al LLM (lo salta el motor)
-  - `Text/VoiceCommands.swift` — comandos de dictado ("nueva línea"→\n, "punto y aparte"→\n\n) + limpieza de puntuación colgante
+  - `LLM/Formatter.swift` — **TextStyle** (off/natural/informal/formal) con prompts por estilo + diccionario personalizado + **TransformPreset** (resumir/lista/formal/informal/inglés/gramática) para el último dictado (resultado al portapapeles); `.off` no debe llamar al LLM (lo salta el motor)
+  - `Text/VoiceCommands.swift` — comandos de dictado ES/EN ("nueva línea"→\n, "punto y aparte"→\n\n, "coma", "dos puntos", "abrir/cerrar paréntesis", "comillas", "punto final", "pulsa enter") aplicados longest-first + limpieza de espaciado
+  - `Text/Snippets.swift` — **Snippets** (frase→expansión, JSON en AppSupport/snippets.json); match exacto omite el LLM, `apply` sustituye dentro de texto con word-boundaries y longest-first
+  - `Notes/ScratchpadStore.swift` — notas rápidas en AppSupport/scratchpad.md con `append` datado
+  - `History/Insights.swift` — stats locales (palabras totales, WPM medio, dictados, minutos)
+  - `Audio/AudioDevices.swift` — enumera inputs Core Audio + resuelve UID↔deviceID
   - `Export/MeetingExporter.swift` — Markdown al portapapeles + PDF via NSPrintOperation (jobDisposition .save)
-  - `Audio/MicRecorder.swift` — AVAudioEngine → 16k mono (converter por buffer)
+  - `Audio/MicRecorder.swift` — AVAudioEngine → 16k mono (converter por buffer); `preferredDeviceUID` selecciona el micro vía kAudioOutputUnitProperty_CurrentDevice
   - `Audio/WavEncoder.swift` — WAV PCM16 en memoria (sin disco en el hot path de dictado)
   - `Audio/SystemAudioRecorder.swift` — **Core Audio Process Tap** (macOS 14.2+, SIN permiso de pantalla): tap global excluyendo nuestro proceso → aggregate device → IOProc @48k
   - `Audio/AudioMixer.swift` — resample (drena con `.endOfStream`) + mezcla con offset + `trimSilence` (recorta silencios cabecera/cola, ~15% menos upload)
   - `HotKey/HotKeyMonitor.swift` — CGEventTap en **hilo dedicado** (no en el run loop de NSApp), maneja `flagsChanged` con code=0 (eventos sintéticos) y con keycode real (teclado físico), suprime la tecla, reactiva el tap si el sistema lo deshabilita, **Esc cancela** y `stop()` cierra el run loop (sin hilos huérfanos)
-  - `Dictation/DictationEngine.swift` — máquina de estados idle→recording→transcribing→formatting (usa `transition(from:to:)`, NUNCA lock anidado → deadlock); respeta `style`, `trimSilenceEnabled` y `fastShortUtterances`; VAD evita subir silencio; si el LLM falla pega la transcripción cruda; cancelación por generación
+  - `Dictation/DictationEngine.swift` — máquina de estados idle→recording→transcribing→formatting (usa `transition(from:to:)`, NUNCA lock anidado → deadlock); respeta `style`, `trimSilenceEnabled`, `fastShortUtterances`, `language` (auto/es/en) y `preferredMicUID`; snippets con match exacto saltan el LLM; VAD evita subir silencio; si el LLM falla pega la transcripción cruda; cancelación por generación
   - `Meeting/MeetingDetector.swift` — poll 2s: bundle IDs de apps nativas + pestañas meet.google.com en Chrome/Edge/Brave (AppleScript best-effort)
   - `Meeting/MeetingEngine.swift` — graba sistema+micro mezclados → WAV en AppSupport/meetings → whisper → resumen LLM → history; el estado sigue en `.processing` hasta que acaba la transcripción; se puede iniciar manualmente desde el menú
   - `TextInsert/TextInserter.swift` — clipboard backup → Cmd+V sintético → restaura clipboard
@@ -63,6 +67,8 @@ open build/Nanflow.app                 # lanzar la app (menú bar)
 9. **Historial**: usa `HistoryStore.shared`. Varias instancias con el mismo JSON se pisan al escribir (cada una tiene su copia en memoria).
 10. **Prewarm**: crear un `NanClient` nuevo por petición hacía que el HEAD de prewarm no compartiera conexión. Ahora `ProviderSettings` cachea el cliente y `NanClient` comparte URLSession.
 11. **Dictado corto**: Natural con ≤3 palabras y sin diccionario/comandos omite el LLM (~1.3s vs ~2.0s). `.off` no debe añadir puntuación.
+12. **Snippets**: el match exacto (normalizando espacios, case-insensitive) NO llama al LLM; en el camino con LLM se aplica después de formatear. Triggers con word-boundaries para no romper palabras.
+13. **Mic por UID**: guardar el UID (no el AudioObjectID) en UserDefaults; los IDs cambian entre reinicios. Resolver con `kAudioHardwarePropertyDeviceForUID`. El espacio antes de "(" en prosa es legítimo: solo se limpia el espacio DESPUÉS de "(" y ANTES de ")".
 
 ## Testing E2E sin manos
 

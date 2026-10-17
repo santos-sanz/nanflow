@@ -11,6 +11,7 @@ struct SettingsView: View {
                 providerSection
                 dictationSection
                 styleSection
+                dictionarySection
                 meetingsSection
                 permissionsSection
                 historySection
@@ -174,6 +175,17 @@ struct SettingsView: View {
         }
     }
 
+    private var dictionarySection: some View {
+        section("Dictionary") {
+            Text("One term per line — names, brands or words the AI must spell exactly as written.")
+                .font(.caption).foregroundStyle(.secondary)
+            TextEditor(text: $store.dictionaryText)
+                .font(.system(size: 12))
+                .frame(minHeight: 72)
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.25)))
+        }
+    }
+
     private var meetingsSection: some View {
         section("Meetings") {
             Toggle("Detect meetings automatically", isOn: $store.meetingsEnabled)
@@ -253,6 +265,15 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                         }
                         Spacer()
+                        if entry.kind == .meeting {
+                            Button {
+                                MeetingDetailWindowController.shared.show(entry: entry)
+                            } label: {
+                                Image(systemName: "doc.text.magnifyingglass")
+                            }
+                            .buttonStyle(.borderless)
+                            .help("Open meeting detail")
+                        }
                         Button {
                             store.copyEntry(entry)
                         } label: {

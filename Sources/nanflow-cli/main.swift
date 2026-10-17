@@ -66,7 +66,7 @@ func cmdPipeline() async {
         print("provider: \(cfg.provider.label) · stt=\(cfg.whisperModel) · llm=\(cfg.model)")
         print("raw:      \(out.text)")
         guard !noFormat, !out.text.isEmpty else { return }
-        let formatted = try await client.chat(system: Formatter.systemPrompt(for: .natural), user: out.text, maxTokens: 2048, temperature: 0.1)
+        let formatted = try await Formatter.formatDictation(out.text, style: .natural)
         let t2 = Date()
         print("final:    \(formatted.trimmingCharacters(in: .whitespacesAndNewlines))")
         print("timing:   stt \(Int(t1.timeIntervalSince(t0) * 1000))ms · llm \(Int(t2.timeIntervalSince(t1) * 1000))ms · total \(Int(t2.timeIntervalSince(t0) * 1000))ms")

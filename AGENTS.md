@@ -26,7 +26,9 @@ open build/Nanflow.app                 # lanzar la app (menú bar)
   - `Config/KeychainStore.swift` — SecItem genérico para API keys metidas por UI (nunca en texto plano) + `masked()` para UI
   - `Config/NFLog.swift` — log en `~/Library/Application Support/Nanflow/nanflow.log`
   - `LLM/NanClient.swift` — whisper (`/v1/audio/transcriptions`, multipart, **también in-memory con `transcribe(samples:)`**) + chat (`/v1/chat/completions`, con `chat_template_kwargs: {enable_thinking: false}` para latencia <2s) + `prewarm()` (calienta DNS+TLS al lanzar)
-  - `LLM/Formatter.swift` — **TextStyle** (off/natural/informal/formal) con prompts por estilo; `.off` no debe llamar al LLM (lo salta el motor)
+  - `LLM/Formatter.swift` — **TextStyle** (off/natural/informal/formal) con prompts por estilo + diccionario personalizado; `.off` no debe llamar al LLM (lo salta el motor)
+  - `Text/VoiceCommands.swift` — comandos de dictado ("nueva línea"→\n, "punto y aparte"→\n\n) + limpieza de puntuación colgante
+  - `Export/MeetingExporter.swift` — Markdown al portapapeles + PDF via NSPrintOperation (jobDisposition .save)
   - `Audio/MicRecorder.swift` — AVAudioEngine → 16k mono (converter por buffer)
   - `Audio/WavEncoder.swift` — WAV PCM16 en memoria (sin disco en el hot path de dictado)
   - `Audio/SystemAudioRecorder.swift` — **Core Audio Process Tap** (macOS 14.2+, SIN permiso de pantalla): tap global excluyendo nuestro proceso → aggregate device → IOProc @48k

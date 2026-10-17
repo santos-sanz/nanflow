@@ -17,6 +17,7 @@ public final class DictationEngine: @unchecked Sendable {
 
     public var style: TextStyle = .natural
     public var trimSilenceEnabled = true
+    public var dictionary: [String] = []
 
     private let mic = MicRecorder()
     private let history: HistoryStore
@@ -95,9 +96,9 @@ public final class DictationEngine: @unchecked Sendable {
                 let formattedText: String
                 if self.style != .off, !transcript.text.isEmpty {
                     self.setState(.formatting)
-                    formattedText = try await Formatter.formatDictation(transcript.text, style: self.style)
+                    formattedText = try await Formatter.formatDictation(transcript.text, style: self.style, dictionary: self.dictionary)
                 } else {
-                    formattedText = transcript.text
+                    formattedText = VoiceCommands.apply(transcript.text)
                 }
                 let t2 = Date()
 

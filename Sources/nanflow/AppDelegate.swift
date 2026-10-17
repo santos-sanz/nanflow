@@ -174,9 +174,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             historyMenu.addItem(empty)
         } else {
             for entry in all {
-                let text = entry.kind == .meeting ? "🔵 \(entry.app) · \(entry.summary?.prefix(40) ?? "procesando…")" : entry.finalText
+                let text = entry.kind == .meeting ? "🔵 \(entry.app) · \(entry.summary?.prefix(40) ?? "abrir…")" : entry.finalText
                 let label = text.count > 48 ? String(text.prefix(48)) + "…" : text
-                let item = NSMenuItem(title: label, action: #selector(copyHistoryEntry(_:)), keyEquivalent: "")
+                let item = NSMenuItem(title: label, action: entry.kind == .meeting ? #selector(openMeetingDetail(_:)) : #selector(copyHistoryEntry(_:)), keyEquivalent: "")
                 item.target = self
                 item.representedObject = entry.id.uuidString
                 item.toolTip = text
@@ -272,6 +272,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openHistory() {
         NSWorkspace.shared.open(EnvLoader.appSupportDir())
+    }
+
+    @MainActor
+    @objc private func openMeetingDetail(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let entry = HistoryStore().all().first(where: { $0.id.uuidString == id }) else { return }
+        MeetingDetailWindowController.shared.show(entry: entry)
     }
 
     @objc private func openEnvFolder() {

@@ -142,6 +142,7 @@ What makes it fast: leading/trailing silence trim (−13 % upload), PCM16 WAV bu
 swift build -c release          # build everything
 swift test                      # 51 unit tests
 ./scripts/build-app.sh release  # build/Nanflow.app, signed "Nanflow Dev"
+./scripts/build-icon.sh          # regenerate AppIcon.icns and docs/logo.* from scripts/generate-icon.swift
 
 # CLI harness
 .build/release/nanflow-cli env                                      # config check
